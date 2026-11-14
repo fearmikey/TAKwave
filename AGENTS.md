@@ -37,7 +37,13 @@ At the end of each session, if any files, features, data flows, or package struc
 * `:core` is pure Kotlin/JVM. **No Android imports.** All protocol, modem, codec, and scheduling logic lives here, with unit tests (`./gradlew :core:test`).
 * `:app` holds everything Android: service, audio, PTT, USB, TCP server, UI.
 * `:usbserial` is vendored third-party source (usb-serial-for-android, MIT). Do not edit it except to bump the vendored version.
+* `:xmlparser` only repackages the kXML 2 jar without `org/xmlpull/**` (Android already ships that API and R8 rejects a second copy). It has no source of its own.
 * No DI frameworks. Wiring is manual, in `AppContainer`.
+
+### 5. ENCRYPTION
+* Encryption is off by default and must stay that way; it is not permitted on amateur bands. Keep the warning in the settings UI.
+* Never fall back to clear text when encryption is selected but unusable; disable transmitting instead.
+* Never log, display or fingerprint private keys or passphrases.
 
 ### 4. RADIO SAFETY
 * PTT must always be released: in `finally` blocks, on service destroy, on USB detach, and by the TX watchdog.

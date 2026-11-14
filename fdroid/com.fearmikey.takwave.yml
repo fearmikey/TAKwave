@@ -1,0 +1,27 @@
+Categories:
+  - Connectivity
+License: GPL-3.0-or-later
+AuthorName: fearmikey
+SourceCode: https://github.com/fearmikey/TAKwave
+IssueTracker: https://github.com/fearmikey/TAKwave/issues
+Changelog: https://github.com/fearmikey/TAKwave/blob/HEAD/CHANGELOG.md
+
+AutoName: TAKwave
+
+RepoType: git
+Repo: https://github.com/fearmikey/TAKwave.git
+Binaries: https://github.com/fearmikey/TAKwave/releases/download/v%v/app-release.apk
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    # Placeholder: replace with the full 40-character hash of the v0.1.0 tag (git rev-parse HEAD).
+    commit: 0000000000000000000000000000000000000000
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1

@@ -1,0 +1,7 @@
+First release.
+
+• Local TAK server for ATAK-CIV and other TAK clients, with data package export
+• Position reports, GeoChat and point markers over Bell 202 AFSK 1200 baud
+• Serial PTT, VOX, KISS TNC and acoustic test mode
+• CSMA channel access and optional time-slotted transmit
+• Optional payload encryption for Part 90 use (off by default)

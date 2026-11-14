@@ -46,7 +46,7 @@ Byte 1:
 | Bits | Meaning |
 |------|---------|
 | 7    | `ENC`: the packet is encrypted (section 6) |
-| 6-4  | reserved, sent as 0, ignored on receive |
+| 6-4  | cipher suite (section 6) when `ENC` is set; otherwise sent as 0 and ignored on receive |
 | 3-0  | message type: 1 = PLI, 2 = Chat, 3 = Marker. In an encrypted packet these bits are 0 and the real type is inside the ciphertext. |
 
 ## 3. Field encodings
@@ -162,24 +162,93 @@ When enabled, the payload is:
 | Offset | Size | Field |
 |--------|------|-------|
 | 0      | 1    | `0x54 + version`, in the clear |
-| 1      | 1    | `0x80` (ENC set, type bits 0), in the clear |
-| 2      | 12   | random nonce |
-| 14     | n+1  | AES-256-GCM ciphertext of: one type byte (1, 2, or 3) followed by the message body |
-| 15+n   | 16   | GCM authentication tag |
+| 1      | 1    | `0x80 | (suite << 4)`: ENC set, cipher suite in bits 6-4, type bits 0. In the clear. |
+| 2      | n    | suite-specific sealed data (below) |
 
-* Cipher: AES-256-GCM, 96-bit nonce, 128-bit tag.
-* Additional authenticated data: payload bytes 0 and 1.
-* Key: PBKDF2-HMAC-SHA256 of the passphrase (UTF-16 characters as passed to the platform
-  `PBEKeySpec`; use ASCII passphrases for interoperability), salt = the 14 ASCII bytes
-  `TAKwave-PSK-v0`, 100000 iterations, 256-bit output.
-* The salt is fixed and public so that all stations derive the same key. The passphrase must
-  therefore be long and random.
-* Encryption adds 29 bytes. The chat text cap shrinks to keep the payload within 256 bytes.
+In every suite the plaintext is one type byte (1, 2, or 3) followed by the message body, and
+the additional authenticated data (AAD) is payload bytes 0 and 1. All AEAD tags are 128 bits.
+
+| Suite | Name | Sealed data | Overhead |
+|-------|------|-------------|----------|
+| 0 | AES-GCM, shared key | nonce (12, random), ciphertext, tag (16) | 28 |
+| 1 | ChaCha20-Poly1305, shared key | nonce (12, random), ciphertext, tag (16) | 28 |
+| 2 | ECIES X25519 + AES-256-GCM | ephemeral public key (32, raw), ciphertext, tag (16) | 48 |
+| 3 | ECIES P-256 + AES-256-GCM | ephemeral public key (33, SEC 1 compressed), ciphertext, tag (16) | 49 |
+| 4-7 | reserved | | |
+
+The type byte adds one more byte in every suite. The chat text cap shrinks so the payload
+stays within 256 bytes.
+
+### Shared-key suites (0 and 1)
+
+The key is 128, 192 or 256 bits for AES-GCM and 256 bits for ChaCha20-Poly1305. It can come from:
+
+* **A passphrase:** PBKDF2-HMAC-SHA256, salt = the 14 ASCII bytes `TAKwave-PSK-v0`, 100000
+  iterations, 256-bit output. The salt is fixed and public so that all stations derive the
+  same key, so the passphrase must be long and random. Use ASCII passphrases for
+  interoperability.
+* **A key file:** 16, 24 or 32 bytes, raw or written as hex or Base64.
+* **A static ECDH agreement between two stations:** each side combines its own private key
+  with the other's public key (EC P-256 or X25519). The key is HKDF-SHA256 of the shared
+  secret with salt `TAKwave-ECDH-v0` and info `pair`, 32 bytes.
+
+### ECIES suites (2 and 3)
+
+Every packet is encrypted to one long-lived "team" public key:
+
+1. The sender generates a fresh ephemeral key pair on the team key's curve.
+2. shared = ECDH(ephemeral private, team public).
+3. key = HKDF-SHA256(shared, salt = `TAKwave-ECIES-v0`, info = ephemeral public || team
+   public), 32 bytes. Public keys are in the on-air encoding: 32 raw bytes for X25519, 33-byte
+   compressed point for P-256.
+4. The plaintext is sealed with AES-256-GCM using that key and a nonce of twelve zero bytes.
+   The key is never used for a second packet, so the fixed nonce is safe.
+
+A station needs only the team public key to send. To read traffic it needs the team private
+key. Devices that only report can therefore be deployed without the ability to decrypt.
+
+### General rules
+
+* Keys are loaded from PEM: PKCS#8 (`BEGIN PRIVATE KEY`, unencrypted) and X.509
+  SubjectPublicKeyInfo (`BEGIN PUBLIC KEY`). RSA is not supported: an RSA ciphertext is at
+  least 256 bytes and cannot fit in a frame.
+* A receiver drops an encrypted packet whose suite differs from its own configuration.
 * A station with a key still accepts clear packets. A station without the right key drops
   encrypted packets.
-* There is no replay protection beyond the receiver's duplicate suppression.
+* HKDF is RFC 5869 with a single 32-byte output block.
+* There is no replay protection beyond the receiver's duplicate suppression, and no forward
+  secrecy in the shared-key suites.
 
-## 7. Versioning rules
+## 7. Channel access
+
+Channel access is a station-local matter and puts nothing in the packet, but stations in a
+group should agree on it.
+
+### p-persistent CSMA (default)
+
+Wait until no packet is being received (data carrier detect), then transmit with probability
+(persistence + 1) / 256, otherwise wait one slot time and repeat. Defaults: slot time 100 ms,
+persistence 63.
+
+### Time slots (optional)
+
+UTC time is divided into cycles of `N` slots of `L` milliseconds, aligned to the Unix epoch:
+
+    slot(t) = floor((t mod (N * L)) / L)        t = milliseconds since 1970-01-01T00:00:00Z
+
+A station assigned slot `k` may begin a transmission of duration `d` only when `slot(t) = k`
+and the transmission ends at least `G` milliseconds before the slot does (`G` = 250 ms guard).
+If `d + G > L` the transmission may begin only within the first 200 ms of the slot. Carrier
+sensing still applies inside the slot; there is no random back-off.
+
+Defaults: `L` = 3000 ms, `N` = 8. The default slot is CRC-16-CCITT (as in section 1) of the
+upper-case ASCII `CALL-SSID` string (no `-SSID` when the SSID is 0), modulo `N`; because two
+callsigns can map to the same slot, groups should assign slots explicitly.
+
+All stations need UTC to within about `G`. Sources: the phone's network-synchronised clock,
+or GNSS time.
+
+## 8. Versioning rules
 
 1. The version lives in byte 0. A receiver drops packets whose version it does not implement.
 2. Changes that an old receiver can safely ignore do **not** bump the version: appending to the

@@ -1,0 +1,23 @@
+TAKwave carries TAK (ATAK, iTAK, WinTAK) traffic over ordinary analog VHF/UHF radios, with no cell service, no mesh hardware and no ATAK plugin.
+
+It runs next to your TAK client on the same phone and acts as a local TAK server. Your position, GeoChat messages and map markers are compressed into tiny packets and sent as 1200-baud AFSK audio through a radio connected by a USB audio and PTT interface such as a Digirig. Other stations decode the audio and their TAK client shows your team on the map.
+
+<b>You need a licence to transmit.</b> TAKwave is for licensed amateur radio operators and Part 90 licensees.
+
+<b>Features</b>
+• Works with stock ATAK-CIV and any TAK client that can connect to a TCP server
+• Position reports, GeoChat (group and direct) and point markers
+• Software Bell 202 AFSK modem; a position report is about 37 bytes on the air
+• Smart throttling: reports on a timer, sooner when you move or turn; chat goes first
+• Carrier-sense channel access, plus optional GPS-timed transmit slots so stations take turns
+• Serial RTS/DTR PTT (Digirig), VOX, or an external KISS TNC such as Dire Wolf
+• Acoustic test mode: try it with two phones and no radios
+• One-tap ATAK data package to set up the server connection
+• Packet log with hex dumps, level meter and calibration tones
+• Safety: no transmission without a callsign, transmit timeout, PTT always released
+• Optional payload encryption for Part 90 use: passphrase, key file, or EC P-256 / X25519 public keys. Off by default and not permitted on amateur bands
+
+<b>Privacy</b>
+No accounts, ads, analytics or cloud services. The only network sockets are the local TAK server and, if you choose it, your own KISS TNC.
+
+TAKwave is free software under the GPL-3.0-or-later licence. It is not affiliated with the TAK Product Center.
