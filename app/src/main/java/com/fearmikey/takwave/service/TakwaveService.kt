@@ -83,7 +83,7 @@ class TakwaveService : Service() {
                 ContextCompat.RECEIVER_NOT_EXPORTED,
             )
             receiverRegistered = true
-            val e = RadioEngine(applicationContext, settings, container.status, container.log)
+            val e = RadioEngine(applicationContext, settings, container.status, container.log, container.keyFiles)
             engine = e
             container.engine = e
             e.start()

@@ -167,7 +167,7 @@ class PacketCodecTest {
     @Test
     fun garbageNeverThrows() {
         val rnd = Random(42)
-        val keyed = PacketCodec(PayloadCrypto("garbage test".toCharArray()))
+        val keyed = PacketCodec(PayloadCrypto.fromPassphrase("garbage test".toCharArray()))
         repeat(50_000) {
             val b = ByteArray(rnd.nextInt(300))
             rnd.nextBytes(b)
@@ -203,7 +203,7 @@ class PacketCodecTest {
 
     @Test
     fun encryption() {
-        val keyed = PacketCodec(PayloadCrypto("correct horse battery staple".toCharArray()))
+        val keyed = PacketCodec(PayloadCrypto.fromPassphrase("correct horse battery staple".toCharArray()))
         for (m in listOf(pli, chat, marker, chat.copy(text = "y".repeat(400)))) {
             val sealed = keyed.encode(m)
             assertEquals(0x54, sealed[0].toInt())
@@ -215,7 +215,7 @@ class PacketCodecTest {
             assertNotEquals(sealed.toList(), keyed.encode(m).toList())
             // No key, wrong key, tampering: all refused.
             assertTrue(codec.decode(sealed) is DecodeResult.Error)
-            assertTrue(PacketCodec(PayloadCrypto("wrong".toCharArray())).decode(sealed) is DecodeResult.Error)
+            assertTrue(PacketCodec(PayloadCrypto.fromPassphrase("wrong".toCharArray())).decode(sealed) is DecodeResult.Error)
             val tampered = sealed.copyOf().also { it[it.size - 1] = (it[it.size - 1].toInt() xor 1).toByte() }
             assertTrue(keyed.decode(tampered) is DecodeResult.Error)
         }

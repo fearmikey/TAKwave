@@ -26,6 +26,10 @@ data class RadioStatus(
     val txTimeoutS: Int = 10,
     /** One line describing the radio path, for example "Soft modem, PTT: VOX". */
     val backendInfo: String = "",
+    /** The active payload cipher, or empty when sending in the clear. */
+    val cipherInfo: String = "",
+    /** Time-slot assignment and time source, or empty when slots are off. */
+    val slotInfo: String = "",
     /** Problems the operator must fix before the gateway can transmit. */
     val warnings: List<String> = emptyList(),
 )

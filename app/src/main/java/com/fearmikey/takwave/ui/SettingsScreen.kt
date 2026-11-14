@@ -46,7 +46,17 @@ import com.fearmikey.takwave.AppContainer
 import com.fearmikey.takwave.audio.AudioDeviceOption
 import com.fearmikey.takwave.audio.AudioDevices
 import com.fearmikey.takwave.core.ax25.Ax25Address
+import com.fearmikey.takwave.data.CipherChoice
 import com.fearmikey.takwave.data.EncryptionMode
+import com.fearmikey.takwave.data.KeySlot
+import com.fearmikey.takwave.data.TimeSource
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.PttLine
 import com.fearmikey.takwave.data.PttMethod
@@ -242,6 +252,38 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+
+            Section("Time slots") {
+                SwitchSetting(
+                    "Transmit only in my time slot",
+                    "Stations take turns: each one transmits only during its own slot of a repeating cycle, so two " +
+                        "stations that cannot hear each other do not transmit over one another. Every station in the " +
+                        "group must use the same slot length and slot count, and a different slot number.",
+                    settings.slotted,
+                ) { v -> update { it.copy(slotted = v) } }
+                if (settings.slotted) {
+                    IntSetting("Slot length (ms)", settings.slotLengthMs, 1000..30000) { v -> update { it.copy(slotLengthMs = v) } }
+                    IntSetting("Slots per cycle", settings.slotCount, 1..64) { v -> update { it.copy(slotCount = v) } }
+                    IntSetting("My slot number (0 = choose from callsign)", settings.slotIndex + 1, 0..settings.slotCount) { v ->
+                        update { it.copy(slotIndex = v - 1) }
+                    }
+                    Text(
+                        "Cycle: %.0f s. Each station can send at most once per cycle, so keep the PLI interval longer than this."
+                            .format(settings.slotLengthMs * settings.slotCount / 1000.0),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Time source", style = MaterialTheme.typography.labelLarge)
+                    ChoiceSetting(TimeSource.entries.map { it to it.label }, settings.timeSource) { v -> update { it.copy(timeSource = v) } }
+                    Text(
+                        "Slots are aligned to UTC, so all stations need the right time to within about a quarter of a second. " +
+                            "The phone clock is accurate when it has had a network connection recently. Off-grid, choose GNSS: " +
+                            "TAKwave then uses satellite time whenever the GPS is running (ATAK keeps it running). " +
+                            "Automatic slot numbers can collide; assign numbers by hand for a team.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
         }
 
         Section("Encryption") {
@@ -250,26 +292,124 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                     "under a Part 90 (business band) licence that allows it.",
             )
             ChoiceSetting(EncryptionMode.entries.map { it to it.label }, settings.encryption) { v -> update { it.copy(encryption = v) } }
-            if (settings.encryption == EncryptionMode.AES256_GCM) {
-                TextSetting(
-                    label = "Passphrase (shared by all stations)",
-                    value = settings.passphrase,
-                    password = true,
-                    error = when {
-                        settings.passphrase.isEmpty() -> "Required. Transmitting is disabled until a passphrase is set."
-                        settings.passphrase.length < 12 -> "Short passphrases are easy to guess; use 12 or more characters."
-                        else -> null
-                    },
-                    onChange = { v -> update { it.copy(passphrase = v) } },
-                )
-                Text(
-                    "Your callsign is still sent in the clear. Only the message content is encrypted.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+            EncryptionDetails(container, settings) { transform -> update(transform) }
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/** Mode-specific controls: passphrase entry, cipher choice and the key slots that the mode uses. */
+@Composable
+private fun EncryptionDetails(container: AppContainer, settings: Settings, update: ((Settings) -> Settings) -> Unit) {
+    val mode = settings.encryption
+    if (mode == EncryptionMode.OFF) return
+    val scope = rememberCoroutineScope()
+    var keyTick by remember { mutableIntStateOf(0) }
+    var pendingSlot by rememberSaveable { mutableStateOf(KeySlot.SYMMETRIC) }
+    var importMessage by remember { mutableStateOf<String?>(null) }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            val slot = pendingSlot
+            scope.launch {
+                importMessage = withContext(Dispatchers.IO) {
+                    try {
+                        "Imported: " + container.keyFiles.import(slot, uri)
+                    } catch (e: Exception) {
+                        "Not imported: ${e.message}"
+                    }
+                }
+                keyTick++
+            }
+        }
+    }
+
+    @Composable
+    fun slotRow(slot: KeySlot, label: String, hint: String) {
+        val info by produceState<String?>(initialValue = null, slot, keyTick) {
+            value = withContext(Dispatchers.IO) { container.keyFiles.info(slot) }
+        }
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelLarge)
+            Text(info ?: "Not loaded", style = MaterialTheme.typography.bodyMedium, color = if (info == null) WarnAmber else RxGreen)
+            Text(hint, style = MaterialTheme.typography.bodySmall)
+            Row {
+                OutlinedButton(onClick = {
+                    pendingSlot = slot
+                    importMessage = null
+                    picker.launch(arrayOf("*/*"))
+                }) { Text(if (info == null) "Import file" else "Replace") }
+                if (info != null) {
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { container.keyFiles.clear(slot) }
+                            keyTick++
+                        }
+                    }) { Text("Remove") }
+                }
+            }
+        }
+    }
+
+    when (mode) {
+        EncryptionMode.OFF -> {}
+        EncryptionMode.PASSPHRASE -> {
+            TextSetting(
+                label = "Passphrase (shared by all stations)",
+                value = settings.passphrase,
+                password = true,
+                error = when {
+                    settings.passphrase.isEmpty() -> "Required. Transmitting is disabled until a passphrase is set."
+                    settings.passphrase.length < 12 -> "Short passphrases are easy to guess; use 12 or more characters."
+                    else -> null
+                },
+                onChange = { v -> update { it.copy(passphrase = v) } },
+            )
+        }
+        EncryptionMode.KEY_FILE -> slotRow(
+            KeySlot.SYMMETRIC, "Shared key",
+            "A 128, 192 or 256-bit key: raw bytes, hex, or Base64. Every station loads the same file. " +
+                "Example: openssl rand -out takwave.key 32",
+        )
+        EncryptionMode.ECDH_PAIR -> {
+            slotRow(
+                KeySlot.PRIVATE, "My private key",
+                "PKCS#8 PEM, EC P-256 or X25519, not password-protected. Never share this file.",
+            )
+            slotRow(
+                KeySlot.PUBLIC, "Peer's public key",
+                "PEM public key of the one other station. Both stations must use the same key type. " +
+                    "Compare the key id shown here with the other operator.",
+            )
+        }
+        EncryptionMode.ECIES_TEAM -> {
+            slotRow(
+                KeySlot.PUBLIC, "Team public key",
+                "PEM public key, EC P-256 or X25519. Enough to send. All stations show the same key id.",
+            )
+            slotRow(
+                KeySlot.PRIVATE, "Team private key (optional)",
+                "Needed to read traffic. Leave it off devices that only report, so a lost device cannot decrypt the team's messages.",
+            )
+        }
+    }
+    importMessage?.let {
+        Text(it, style = MaterialTheme.typography.bodyMedium, color = if (it.startsWith("Imported")) RxGreen else WarnAmber)
+    }
+    if (mode != EncryptionMode.ECIES_TEAM) {
+        Spacer(Modifier.height(8.dp))
+        Text("Cipher", style = MaterialTheme.typography.labelLarge)
+        ChoiceSetting(CipherChoice.entries.map { it to it.label }, settings.cipher) { v -> update { it.copy(cipher = v) } }
+    }
+    Text(
+        when (mode) {
+            EncryptionMode.ECIES_TEAM -> "Each packet is encrypted to the team key with a one-time key (ECIES, AES-256-GCM). Adds 48 to 49 bytes per packet."
+            else -> "Adds 28 bytes per packet."
+        } + " Your callsign is still sent in the clear; only the message content is encrypted. " +
+            "RSA keys are not supported: an RSA ciphertext does not fit in a radio packet.",
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 private fun audioChoices(options: List<AudioDeviceOption>, selected: String): List<Pair<String, String>> = buildList {

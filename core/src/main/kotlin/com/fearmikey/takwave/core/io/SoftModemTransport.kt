@@ -4,7 +4,10 @@ package com.fearmikey.takwave.core.io
 import com.fearmikey.takwave.core.modem.AfskDemodulator
 import com.fearmikey.takwave.core.modem.AfskModulator
 import com.fearmikey.takwave.core.modem.Bell202
-import com.fearmikey.takwave.core.sched.Csma
+import com.fearmikey.takwave.core.sched.ChannelAccess
+import com.fearmikey.takwave.core.sched.Clock
+import com.fearmikey.takwave.core.sched.SlotConfig
+import com.fearmikey.takwave.core.sched.SlotSchedule
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -22,6 +25,8 @@ data class ModemConfig(
     val txTimeoutMs: Int = 10_000,
     /** How long to wait for a clear channel before giving up on a frame. */
     val maxChannelWaitMs: Long = 30_000,
+    /** Time-slotted transmit; null for plain CSMA. */
+    val slots: SlotConfig? = null,
 )
 
 /**
@@ -36,11 +41,18 @@ class SoftModemTransport(
     private val sink: AudioSink,
     private val ptt: Ptt,
     private val config: ModemConfig = ModemConfig(),
+    /** Time source for slot timing; pass a GNSS-disciplined clock when one is available. */
+    clock: Clock = Clock.SYSTEM,
 ) : FrameTransport {
     private val modulator = AfskModulator()
     @Volatile private var listener: FrameListener? = null
     private val demodulator = AfskDemodulator { frame -> listener?.onFrame(frame) }
-    private val csma = Csma(config.slotTimeMs, config.persistence) { channelBusy() }
+    private val access = ChannelAccess(
+        slotTimeMs = config.slotTimeMs,
+        persistence = config.persistence,
+        slots = config.slots?.let { SlotSchedule(it) },
+        clock = clock,
+    ) { channelBusy() }
     private val watchdog = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "takwave-tx-watchdog").apply { isDaemon = true }
     }
@@ -117,8 +129,13 @@ class SoftModemTransport(
                 lastError = "transport is closed"
                 return false
             }
-            if (useCsma && !csma.awaitClear(config.maxChannelWaitMs)) {
-                lastError = "channel busy for more than ${config.maxChannelWaitMs} ms"
+            if (useCsma && !access.await(durationMs, config.maxChannelWaitMs)) {
+                lastError = "no clear transmit opportunity within ${config.maxChannelWaitMs} ms"
+                return false
+            }
+            if (!running) {
+                // close() was called while this frame was waiting for the channel: do not key.
+                lastError = "transport is closed"
                 return false
             }
             var timer: ScheduledFuture<*>? = null

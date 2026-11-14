@@ -185,8 +185,8 @@ class GatewayTest {
     @Test
     fun encryptedStationsInteroperateOnlyWithTheSameKey() {
         val key = "part 90 fleet key"
-        val ea = Gateway(clock, Ax25Address("WQAA11"), PacketCodec(PayloadCrypto(key.toCharArray())))
-        val eb = Gateway(clock, Ax25Address("WQBB22"), PacketCodec(PayloadCrypto(key.toCharArray())))
+        val ea = Gateway(clock, Ax25Address("WQAA11"), PacketCodec(PayloadCrypto.fromPassphrase(key.toCharArray())))
+        val eb = Gateway(clock, Ax25Address("WQBB22"), PacketCodec(PayloadCrypto.fromPassphrase(key.toCharArray())))
         ea.onClientEvent(golden("chat_all_atak.xml"))
         val frame = drain(ea).single().frame
         // The AX.25 header stays readable; the text does not.

@@ -1,25 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- An audio wave (two tones, like the AFSK signal) over a position dot. Original artwork. -->
+<!--
+    A radio mast sending out waves. Original artwork. All shapes sit inside the 66dp adaptive-icon
+    safe zone. The same geometry is drawn by the generateFastlaneIcon Gradle task; keep them in step.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Slow tone -->
+    <!-- Outer wave -->
     <path
-        android:pathData="M27,50 C31,34 37,34 41,50 S51,66 55,50"
+        android:pathData="M37.1,25.9A22,22 0,0 0,37.1 54.1 M70.9,25.9A22,22 0,0 1,70.9 54.1"
+        android:strokeColor="#994DD0E1"
+        android:strokeLineCap="round"
+        android:strokeWidth="3.5" />
+    <!-- Inner wave -->
+    <path
+        android:pathData="M43.3,31A14,14 0,0 0,43.3 49 M64.7,31A14,14 0,0 1,64.7 49"
         android:strokeColor="#FF4DD0E1"
         android:strokeLineCap="round"
-        android:strokeWidth="4.5" />
-    <!-- Fast tone -->
+        android:strokeWidth="3.5" />
+    <!-- Mast legs -->
     <path
-        android:pathData="M55,50 C57,36 61,36 63,50 S69,64 71,50 S77,36 79,50 S81,56 81,50"
-        android:strokeColor="#FFFFB74D"
+        android:pathData="M54,42L45,80 M54,42L63,80"
+        android:strokeColor="#FFECEFF1"
         android:strokeLineCap="round"
-        android:strokeWidth="4.5" />
-    <!-- Position marker -->
+        android:strokeWidth="3.2" />
+    <!-- Lattice -->
     <path
-        android:fillColor="#FFECEFF1"
-        android:pathData="M54,70m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+        android:pathData="M49.7,60H58.3 M47.4,70H60.6 M49.7,60L60.6,70 M58.3,60L47.4,70"
+        android:strokeColor="#FFECEFF1"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.8" />
+    <!-- Antenna tip -->
+    <path
+        android:fillColor="#FFFFB74D"
+        android:pathData="M54,40m-4.2,0a4.2,4.2 0,1 1,8.4 0a4.2,4.2 0,1 1,-8.4 0" />
 </vector>

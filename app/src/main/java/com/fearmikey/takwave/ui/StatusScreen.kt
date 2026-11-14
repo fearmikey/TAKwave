@@ -130,6 +130,12 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
                 Spacer(Modifier.width(12.dp))
                 Text(status.backendInfo.ifEmpty { settings.backend.label }, style = MaterialTheme.typography.bodyMedium)
             }
+            if (status.cipherInfo.isNotEmpty()) {
+                Text("Encrypted: ${status.cipherInfo}", style = MaterialTheme.typography.bodySmall, color = WarnAmber, modifier = Modifier.padding(top = 6.dp))
+            }
+            if (status.slotInfo.isNotEmpty()) {
+                Text(status.slotInfo, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            }
             Spacer(Modifier.height(12.dp))
             Text("Input level", style = MaterialTheme.typography.labelMedium)
             LevelMeter(status.level, status.peak)

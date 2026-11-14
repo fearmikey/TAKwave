@@ -22,6 +22,9 @@ object Wire {
     const val TYPE_MARKER = 3
     const val TYPE_MASK = 0x0F
     const val FLAG_ENCRYPTED = 0x80
+    /** Bits 6-4 of byte 1 carry the cipher suite of an encrypted packet. */
+    const val SUITE_SHIFT = 4
+    const val SUITE_MASK = 0x07
 
     /** AX.25 default maximum information field. */
     const val MAX_PAYLOAD = 256
@@ -132,12 +135,15 @@ internal class ByteReader(private val data: ByteArray, private var pos: Int = 0)
 /**
  * Encodes [TakMessage]s to the compact over-air payload and back. The payload is the AX.25
  * information field. When [crypto] is set, everything after the two header bytes is sealed
- * with AES-256-GCM.
+ * by the configured [PayloadCipher].
  */
-class PacketCodec(private val crypto: PayloadCrypto? = null) {
+class PacketCodec(private val crypto: PayloadCipher? = null) {
+
+    /** Description of the active cipher for the UI, or null when sending in the clear. */
+    val cipherDescription: String? get() = crypto?.description
 
     fun encode(message: TakMessage): ByteArray {
-        val overhead = if (crypto != null) PayloadCrypto.OVERHEAD + 1 else 0
+        val overhead = if (crypto != null) crypto.overhead + 1 else 0
         val w = ByteWriter()
         val type = when (message) {
             is PliMessage -> { writePli(w, message); Wire.TYPE_PLI }
@@ -153,7 +159,7 @@ class PacketCodec(private val crypto: PayloadCrypto? = null) {
             body.copyInto(out, 2)
             return out
         }
-        val header = byteArrayOf(version, Wire.FLAG_ENCRYPTED.toByte())
+        val header = byteArrayOf(version, (Wire.FLAG_ENCRYPTED or (crypto.suite shl Wire.SUITE_SHIFT)).toByte())
         val plain = ByteArray(1 + body.size)
         plain[0] = type.toByte()
         body.copyInto(plain, 1)
@@ -184,6 +190,9 @@ class PacketCodec(private val crypto: PayloadCrypto? = null) {
         val reader: ByteReader
         if (encrypted) {
             val c = crypto ?: return DecodeResult.Error("encrypted packet but no key configured")
+            val suite = (b1 ushr Wire.SUITE_SHIFT) and Wire.SUITE_MASK
+            if (suite != c.suite) return DecodeResult.Error("encrypted with cipher suite $suite, this station is set up for suite ${c.suite}")
+            if (!c.canDecrypt) return DecodeResult.Error("encrypted packet but no private key loaded (send-only)")
             val plain = c.open(payload, 2, payload.size - 2, payload.copyOfRange(0, 2))
                 ?: return DecodeResult.Error("decryption failed (wrong key or corrupt)")
             if (plain.isEmpty()) return DecodeResult.Error("too short")

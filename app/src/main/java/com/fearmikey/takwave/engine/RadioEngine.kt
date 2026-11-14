@@ -10,7 +10,7 @@ import com.fearmikey.takwave.audio.AndroidAudioSink
 import com.fearmikey.takwave.audio.AndroidAudioSource
 import com.fearmikey.takwave.audio.AudioDevices
 import com.fearmikey.takwave.core.codec.PacketCodec
-import com.fearmikey.takwave.core.codec.PayloadCrypto
+import com.fearmikey.takwave.core.codec.PayloadCipher
 import com.fearmikey.takwave.core.codec.PliMessage
 import com.fearmikey.takwave.core.codec.Role
 import com.fearmikey.takwave.core.codec.Team
@@ -26,6 +26,10 @@ import com.fearmikey.takwave.core.modem.AfskModulator
 import com.fearmikey.takwave.core.modem.Bell202
 import com.fearmikey.takwave.core.sched.Clock
 import com.fearmikey.takwave.core.sched.PliConfig
+import com.fearmikey.takwave.core.sched.SlotConfig
+import com.fearmikey.takwave.core.sched.SlotSchedule
+import com.fearmikey.takwave.data.KeyFiles
+import com.fearmikey.takwave.data.TimeSource
 import com.fearmikey.takwave.data.EncryptionMode
 import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.PttMethod
@@ -56,7 +60,15 @@ class RadioEngine(
     private val settings: Settings,
     private val status: MutableStateFlow<RadioStatus>,
     private val log: PacketLog,
+    private val keyFiles: KeyFiles,
 ) {
+    /** Correction added to the phone clock to get GNSS time; 0 until a GNSS time is available. */
+    @Volatile private var clockOffsetMs = 0L
+    @Volatile private var timeInfo = ""
+    private var slotInfo = ""
+    private var lastGnssCheckMs = 0L
+    private val radioClock = Clock { System.currentTimeMillis() + clockOffsetMs }
+
     @Volatile private var running = false
     @Volatile private var pttLost = false
     private val warnings = ArrayList<String>()
@@ -71,6 +83,7 @@ class RadioEngine(
     private var txThread: Thread? = null
     private var tickThread: Thread? = null
     private var backendInfo = ""
+    private var cipherInfo = ""
 
     /** Brings everything up on a worker thread (opening audio and USB can block). */
     fun start() {
@@ -84,18 +97,21 @@ class RadioEngine(
             val address = settings.address
             if (address == null) warn("No valid callsign set. Receiving only; nothing will be transmitted.")
 
-            var crypto: PayloadCrypto? = null
+            var crypto: PayloadCipher? = null
             var canTransmit = address != null
-            if (settings.encryption == EncryptionMode.AES256_GCM) {
-                if (settings.passphrase.isEmpty()) {
-                    warn("Encryption is on but no passphrase is set. Transmitting is disabled.")
+            if (settings.encryption != EncryptionMode.OFF) {
+                try {
+                    crypto = keyFiles.buildCipher(settings)
+                    info("Payload encryption ON: ${crypto?.description}. This is not permitted on amateur frequencies.")
+                    if (crypto?.canDecrypt == false) warn("Send-only encryption: no private key is loaded, so encrypted traffic from others cannot be read.")
+                } catch (e: Exception) {
+                    // Never fall back to sending in the clear when the operator asked for encryption.
+                    warn("Encryption is on but cannot be used: ${e.message}. Transmitting is disabled.")
                     canTransmit = false
-                } else {
-                    crypto = PayloadCrypto(settings.passphrase.toCharArray())
-                    info("Payload encryption ON. This is not permitted on amateur frequencies.")
                 }
             }
 
+            cipherInfo = crypto?.description ?: ""
             val gw = Gateway(
                 clock = Clock.SYSTEM,
                 source = if (canTransmit) address else null,
@@ -177,9 +193,12 @@ class RadioEngine(
         val source = AndroidAudioSource(context, input).also { audioSource = it }
         val sink = AndroidAudioSink(output).also { audioSink = it }
         backendInfo = "Soft modem, PTT: ${settings.pttMethod.label}"
+        val slots = if (settings.slotted) buildSlots() else null
         return SoftModemTransport(
             source, sink, ptt,
-            ModemConfig(
+            clock = radioClock,
+            config = ModemConfig(
+                slots = slots,
                 txDelayMs = settings.txDelayMs,
                 txTailMs = settings.txTailMs,
                 amplitude = settings.txLevel / 100.0,
@@ -189,6 +208,45 @@ class RadioEngine(
                 txTimeoutMs = settings.txTimeoutS * 1000,
             ),
         ).also { softModem = it }
+    }
+
+    private fun buildSlots(): SlotConfig? {
+        return try {
+            val count = settings.slotCount
+            val index = if (settings.slotIndex in 0 until count) settings.slotIndex
+            else SlotSchedule.autoSlot(settings.address?.toString() ?: "", count)
+            val config = SlotConfig(slotMs = settings.slotLengthMs, slotCount = count, slotIndex = index)
+            slotInfo = "Time slot ${index + 1} of $count, ${settings.slotLengthMs / 1000.0} s each" +
+                if (settings.slotIndex < 0) " (slot chosen from callsign)" else ""
+            // The longest packet must fit a slot, or it would always spill into a neighbour's.
+            val longestMs = settings.txDelayMs + settings.txTailMs + (272 * 8 * 1000L / 1200) * 7 / 6
+            if (longestMs + config.guardMs > settings.slotLengthMs) {
+                warn("The slot length is shorter than the longest packet (about ${longestMs / 100 / 10.0} s). Long chat messages will overrun their slot.")
+            }
+            if (settings.timeSource == TimeSource.GNSS) updateGnssOffset(force = true) else timeInfo = "phone clock"
+            config
+        } catch (e: IllegalArgumentException) {
+            warn("Time slots are misconfigured (${e.message}); using plain carrier sensing.")
+            null
+        }
+    }
+
+    /**
+     * Reads GNSS time from the platform (available when any app, typically ATAK, has the GPS
+     * running) and records how far the phone clock is from it. Falls back to the phone clock.
+     */
+    private fun updateGnssOffset(force: Boolean = false) {
+        val nowMs = System.currentTimeMillis()
+        if (!force && nowMs - lastGnssCheckMs < GNSS_CHECK_PERIOD_MS) return
+        lastGnssCheckMs = nowMs
+        try {
+            val gnss = android.os.SystemClock.currentGnssTimeClock().millis()
+            clockOffsetMs = gnss - System.currentTimeMillis()
+            timeInfo = "GNSS time (phone clock is off by ${-clockOffsetMs} ms)"
+        } catch (e: Exception) {
+            // No GNSS time yet. Keep the last offset if there was one.
+            timeInfo = if (clockOffsetMs == 0L) "GNSS time unavailable, using phone clock" else "GNSS time lost, holding last correction"
+        }
     }
 
     // ---- Data paths ----
@@ -249,6 +307,7 @@ class RadioEngine(
     }
 
     private fun publish() {
+        if (settings.slotted && settings.timeSource == TimeSource.GNSS && softModem != null) updateGnssOffset()
         val tr = transport
         val gw = gateway
         status.value = RadioStatus(
@@ -263,6 +322,8 @@ class RadioEngine(
             softModem = softModem != null,
             txTimeoutS = settings.txTimeoutS,
             backendInfo = backendInfo,
+            cipherInfo = cipherInfo,
+            slotInfo = if (slotInfo.isEmpty()) "" else "$slotInfo; $timeInfo",
             warnings = synchronized(warnings) { warnings.toList() },
         )
     }
@@ -360,5 +421,6 @@ class RadioEngine(
         const val TAG = "TAKwave"
         const val IDLE_POLL_MS = 100L
         const val STATUS_PERIOD_MS = 100L
+        const val GNSS_CHECK_PERIOD_MS = 30_000L
     }
 }

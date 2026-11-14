@@ -28,7 +28,21 @@ enum class ModemBackend(val label: String) {
 
 enum class EncryptionMode(val label: String) {
     OFF("Off"),
-    AES256_GCM("AES-256-GCM (pre-shared key)"),
+    PASSPHRASE("Pre-shared passphrase"),
+    KEY_FILE("Symmetric key file"),
+    ECDH_PAIR("Key pair with one peer (ECDH)"),
+    ECIES_TEAM("Team public key (ECIES)"),
+}
+
+/** Symmetric cipher used with a passphrase, key file or ECDH-derived key. */
+enum class CipherChoice(val label: String) {
+    AES_GCM("AES-GCM"),
+    CHACHA20_POLY1305("ChaCha20-Poly1305"),
+}
+
+enum class TimeSource(val label: String) {
+    SYSTEM("Phone clock (network time)"),
+    GNSS("GNSS (GPS) time"),
 }
 
 /** Every user setting, with the defaults from the build spec. Read once when the service starts. */
@@ -62,7 +76,15 @@ data class Settings(
     val kissHost: String = "127.0.0.1",
     val kissPort: Int = 8001,
     val encryption: EncryptionMode = EncryptionMode.OFF,
+    val cipher: CipherChoice = CipherChoice.AES_GCM,
     val passphrase: String = "",
+    /** Time-slotted transmit (TDMA overlay on top of carrier sensing). */
+    val slotted: Boolean = false,
+    val slotLengthMs: Int = 3000,
+    val slotCount: Int = 8,
+    /** This station's slot, or -1 to derive it from the callsign. */
+    val slotIndex: Int = -1,
+    val timeSource: TimeSource = TimeSource.SYSTEM,
 ) {
     /** The station's AX.25 address, or null while the callsign is missing or invalid. */
     val address: Ax25Address? get() = if (callsign.isBlank()) null else Ax25Address.parse("$callsign-$ssid")
@@ -108,7 +130,13 @@ class SettingsStore(context: Context) {
             kissHost = p[KISS_HOST] ?: d.kissHost,
             kissPort = p[KISS_PORT] ?: d.kissPort,
             encryption = enumOf(p[ENCRYPTION], d.encryption),
+            cipher = enumOf(p[CIPHER], d.cipher),
             passphrase = p[PASSPHRASE] ?: d.passphrase,
+            slotted = p[SLOTTED] ?: d.slotted,
+            slotLengthMs = p[SLOT_LENGTH] ?: d.slotLengthMs,
+            slotCount = p[SLOT_COUNT] ?: d.slotCount,
+            slotIndex = p[SLOT_INDEX] ?: d.slotIndex,
+            timeSource = enumOf(p[TIME_SOURCE], d.timeSource),
         )
     }
 
@@ -138,7 +166,13 @@ class SettingsStore(context: Context) {
         p[KISS_HOST] = s.kissHost
         p[KISS_PORT] = s.kissPort
         p[ENCRYPTION] = s.encryption.name
+        p[CIPHER] = s.cipher.name
         p[PASSPHRASE] = s.passphrase
+        p[SLOTTED] = s.slotted
+        p[SLOT_LENGTH] = s.slotLengthMs
+        p[SLOT_COUNT] = s.slotCount
+        p[SLOT_INDEX] = s.slotIndex
+        p[TIME_SOURCE] = s.timeSource.name
     }
 
     private inline fun <reified E : Enum<E>> enumOf(name: String?, default: E): E =
@@ -171,5 +205,11 @@ class SettingsStore(context: Context) {
         val KISS_PORT = intPreferencesKey("kiss_port")
         val ENCRYPTION = stringPreferencesKey("encryption")
         val PASSPHRASE = stringPreferencesKey("passphrase")
+        val CIPHER = stringPreferencesKey("cipher")
+        val SLOTTED = booleanPreferencesKey("slotted")
+        val SLOT_LENGTH = intPreferencesKey("slot_length_ms")
+        val SLOT_COUNT = intPreferencesKey("slot_count")
+        val SLOT_INDEX = intPreferencesKey("slot_index")
+        val TIME_SOURCE = stringPreferencesKey("time_source")
     }
 }

@@ -1,0 +1,149 @@
+{
+  "project": "TAKwave",
+  "applicationId": "com.fearmikey.takwave",
+  "summary": "Android app that carries TAK Cursor-on-Target traffic (PLI, GeoChat, point markers) over analog VHF/UHF radios using a software Bell 202 AFSK modem. Acts as a local TCP TAK server for ATAK; no ATAK plugin.",
+  "architecture": {
+    "pattern": "Pure-Kotlin core library + thin Android shell. Manual constructor wiring (AppContainer), no DI framework. UI is single-activity Jetpack Compose reading StateFlows. The gateway runs in a foreground service on plain threads.",
+    "rules": [
+      ":core has no Android imports; all protocol/modem/crypto/scheduling logic and all unit tests live there",
+      ":app holds everything Android",
+      ":usbserial is vendored third-party source; do not edit",
+      "Over-air format changes must follow docs/PROTOCOL.md versioning rules",
+      "PTT must be released in finally blocks, on service destroy, on USB detach and by the TX watchdog"
+    ]
+  },
+  "modules": {
+    ":core": {
+      "type": "kotlin-jvm library",
+      "root": "core/src/main/kotlin/com/fearmikey/takwave/core",
+      "tests": "core/src/test/kotlin/com/fearmikey/takwave/core (run: ./gradlew :core:test)",
+      "packages": {
+        "ax25": {
+          "responsibility": "AX.25 addresses and UI frames, CRC-16-CCITT FCS, HDLC flags/bit stuffing, NRZI",
+          "files": ["ax25/Ax25.kt", "ax25/Crc16.kt", "ax25/Hdlc.kt"]
+        },
+        "modem": {
+          "responsibility": "Bell 202 AFSK 1200 baud at 48 kHz: modulator, multi-slicer demodulator with PLL, DCD, level meter, FIR design",
+          "files": ["modem/AfskModulator.kt", "modem/AfskDemodulator.kt", "modem/Fir.kt"]
+        },
+        "codec": {
+          "responsibility": "Over-air binary payload (PLI/Chat/Marker), field encodings and caps, payload encryption suites and key loading",
+          "files": ["codec/Messages.kt", "codec/PacketCodec.kt", "codec/PayloadCrypto.kt"],
+          "notes": "PayloadCrypto.kt holds PayloadCipher, AeadCipher (suites 0/1), EciesCipher (suites 2/3), KeyLoader (passphrase, key files, PEM, ECDH, HKDF)"
+        },
+        "cot": {
+          "responsibility": "CoT XML: hardened parsing, stream splitting on </event>, classification of client events, rebuilding XML for RF traffic",
+          "files": ["cot/CotEvent.kt", "cot/CotParser.kt", "cot/CotStreamSplitter.kt", "cot/CotMapper.kt", "cot/CotBuilder.kt"]
+        },
+        "sched": {
+          "responsibility": "Injected clock, PLI scheduler, priority TX queue, loop guard, p-persistent CSMA, time-slot schedule and channel access, geo helpers",
+          "files": ["sched/Scheduling.kt", "sched/SlotSchedule.kt"]
+        },
+        "gateway": {
+          "responsibility": "I/O-free heart of the app: client CoT -> queue -> AX.25 frames, and RF frames -> CoT; heard-station table",
+          "files": ["gateway/Gateway.kt"]
+        },
+        "io": {
+          "responsibility": "Boundary interfaces (AudioSink, AudioSource, Ptt, FrameTransport) and the two transports",
+          "files": ["io/Transport.kt", "io/SoftModemTransport.kt", "io/KissTcpTransport.kt"]
+        },
+        "kiss": {
+          "responsibility": "KISS TNC framing",
+          "files": ["kiss/Kiss.kt"]
+        },
+        "datapackage": {
+          "responsibility": "Builds the ATAK mission-package zip that configures the server connection",
+          "files": ["datapackage/DataPackage.kt"]
+        }
+      }
+    },
+    ":app": {
+      "type": "android application",
+      "root": "app/src/main/java/com/fearmikey/takwave",
+      "packages": {
+        "(root)": {
+          "responsibility": "Application class, manual wiring, single activity with tab navigation",
+          "files": ["TakwaveApp.kt", "MainActivity.kt"]
+        },
+        "data": {
+          "responsibility": "Settings model and DataStore persistence; imported key files and cipher construction",
+          "files": ["data/Settings.kt", "data/KeyFiles.kt"]
+        },
+        "engine": {
+          "responsibility": "RadioEngine wires CotServer + Gateway + transport and owns the tx/status threads; RadioStatus and PacketLog state holders",
+          "files": ["engine/RadioEngine.kt", "engine/State.kt"]
+        },
+        "service": {
+          "responsibility": "Foreground service (microphone|connectedDevice), notification, wake lock, USB-detach handling",
+          "files": ["service/TakwaveService.kt"]
+        },
+        "net": {
+          "responsibility": "Local TCP CoT server; share-sheet export of the data package and log",
+          "files": ["net/CotServer.kt", "net/Sharing.kt"]
+        },
+        "audio": {
+          "responsibility": "AudioRecord/AudioTrack implementations of AudioSource/AudioSink, audio device enumeration",
+          "files": ["audio/AndroidAudio.kt"]
+        },
+        "ptt": {
+          "responsibility": "Serial RTS/DTR PTT through usb-serial-for-android, USB permission requests",
+          "files": ["ptt/SerialPtt.kt"]
+        },
+        "ui": {
+          "responsibility": "Compose screens and shared widgets",
+          "files": ["ui/Theme.kt", "ui/StatusScreen.kt", "ui/SettingsScreen.kt", "ui/LogScreen.kt", "ui/CalibrateScreen.kt"]
+        }
+      },
+      "resources": {
+        "manifest": "app/src/main/AndroidManifest.xml",
+        "keepRules": "app/src/main/keepRules/rules.keep",
+        "icons": ["app/src/main/res/drawable/ic_launcher_foreground.xml", "app/src/main/res/drawable/ic_launcher_background.xml", "app/src/main/res/drawable/ic_stat_wave.xml"],
+        "xml": ["app/src/main/res/xml/usb_device_filter.xml", "app/src/main/res/xml/file_paths.xml"]
+      }
+    },
+    ":usbserial": {
+      "type": "android library (vendored)",
+      "responsibility": "usb-serial-for-android v3.9.0, MIT, unmodified. See usbserial/VENDORED.md"
+    },
+    ":xmlparser": {
+      "type": "java library (repackaging only)",
+      "responsibility": "kXML 2 jar minus org/xmlpull/** so R8 accepts it alongside the Android platform's XmlPull API"
+    }
+  },
+  "dataFlows": {
+    "clientToRadio": [
+      "TAK client -> TCP -> net/CotServer.readLoop",
+      "core cot/CotStreamSplitter (split on </event>, 64 KB cap)",
+      "engine/RadioEngine.onClientEvent -> core gateway/Gateway.onClientEvent",
+      "cot/CotParser.parse (hardened) -> cot/CotMapper.classify (PLI / chat / marker / ping / drop)",
+      "sched/LoopGuard check -> PLI: sched/PliScheduler.update; chat & markers: sched/TxQueue.offer",
+      "RadioEngine.transmitLoop -> Gateway.pollFrame (scheduler.due -> queue.poll -> codec/PacketCodec.encode [+ PayloadCipher.seal] -> ax25/Ax25Frame.encode)",
+      "io/FrameTransport.send: SoftModemTransport (sched/ChannelAccess: CSMA or time slot -> Ptt.key -> modem/AfskModulator -> AudioSink -> Ptt.unkey in finally) or KissTcpTransport (kiss/Kiss.encode -> TCP)",
+      "app audio/AndroidAudioSink + ptt/SerialPtt -> radio"
+    ],
+    "radioToClient": [
+      "radio -> app audio/AndroidAudioSource -> SoftModemTransport.receiveLoop",
+      "modem/AfskDemodulator (filters, slicers, PLL) -> ax25/HdlcDeframer (unstuff, FCS check) -> FrameListener",
+      "(or KissTcpTransport -> kiss/KissDecoder -> FrameListener)",
+      "RadioEngine.onRfFrame -> Gateway.onRfFrame: Ax25Frame.decode, destination/PID/own-callsign/duplicate checks",
+      "codec/PacketCodec.decode [+ PayloadCipher.open] -> LoopGuard.markFromRf -> heard table",
+      "cot/CotBuilder (adds <__takwave rx=\"1\"/>) -> net/CotServer.sendToAll -> every TAK client"
+    ],
+    "clientRelay": "CotServer -> RadioEngine.onClientEvent -> CotServer.sendToAll(except sender) for every valid non-ping event",
+    "settings": "ui/SettingsScreen -> data/SettingsStore (DataStore) ; read once by service/TakwaveService when it builds RadioEngine",
+    "keys": "ui/SettingsScreen file picker -> data/KeyFiles.import (validates via core codec/KeyLoader) -> files/keys/* ; KeyFiles.buildCipher at gateway start",
+    "status": "RadioEngine.publish (10 Hz) -> AppContainer.status StateFlow -> Compose screens and the service notification",
+    "dataPackage": "ui/StatusScreen -> net/Sharing.shareDataPackage -> core datapackage/DataPackage.build -> FileProvider -> share sheet -> ATAK"
+  },
+  "build": {
+    "catalog": "gradle/libs.versions.toml",
+    "fossGuard": "app/build.gradle.kts task checkFossDependencies (runs before preBuild)",
+    "storeIcon": "root build.gradle.kts task generateFastlaneIcon",
+    "release": "see AGENTS.md 'Release & publishing workflow'"
+  },
+  "docs": ["README.md", "docs/PROTOCOL.md", "docs/DECISIONS.md", "docs/TODO.md", "CHANGELOG.md", "AGENTS.md"],
+  "packaging": {
+    "fdroidRecipe": "fdroid/com.fearmikey.takwave.yml",
+    "fastlane": "fastlane/metadata/android/en-US/"
+  }
+}
