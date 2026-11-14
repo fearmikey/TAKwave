@@ -1,1 +1,1 @@
-Share TAK positions, chat and markers over ordinary analog VHF/UHF radios
+Companion app for ATAK: TAK positions, chat and markers over analog radios

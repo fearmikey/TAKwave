@@ -22,6 +22,11 @@ squeezes Cursor-on-Target messages into tiny binary packets and sends them as 12
 audio, the same signalling APRS uses. The other phones decode the audio and their ATAK shows
 your team on the map.
 
+**TAKwave is a companion app, not an ATAK plugin.** A plugin is code loaded inside ATAK itself,
+built against the ATAK SDK and signed for a specific ATAK version. TAKwave is a separate app
+that ATAK talks to over a local network connection, exactly as it would talk to a TAK server.
+That is why it needs no signing, survives ATAK updates, and works with other TAK clients too.
+
 ```
  ATAK ──TCP──► TAKwave ──► compact packet ──► AX.25 ──► AFSK audio ──► radio ))))
  ATAK ◄──TCP── TAKwave ◄── CoT XML rebuilt ◄── AX.25 ◄── AFSK audio ◄── radio ((((
