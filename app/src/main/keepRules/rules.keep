@@ -1,12 +1,10 @@
-# Add project specific R8 rules here.
-# AGP will combine all keep rule files in src/main/keepRules to pass to R8
-#
-# For more details, see
-#   https://d.android.com/r/tools/r8/keep-rules
+# SPDX-License-Identifier: GPL-3.0-or-later
+# R8 keep rules for TAKwave. AGP combines every *.keep file in src/main/keepRules.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# usb-serial-for-android (vendored in :usbserial) finds its driver classes by reflection:
+# UsbSerialProber calls each driver's static getSupportedDevices() and its
+# (UsbDevice) constructor through java.lang.reflect.
+-keep class com.hoho.android.usbserial.driver.* { *; }
+
+# kXML (:xmlparser) is instantiated directly (org.kxml2.io.KXmlParser), not through
+# XmlPullParserFactory, so it needs no keep rule.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<paths>
+    <!-- Generated files handed to the share sheet: the ATAK data package and exported logs. -->
+    <cache-path
+        name="export"
+        path="export/" />
+</paths>

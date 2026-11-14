@@ -71,6 +71,8 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":usbserial"))
+    implementation(project(":xmlparser"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

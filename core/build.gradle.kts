@@ -17,7 +17,10 @@ kotlin {
 }
 
 dependencies {
-    implementation(libs.kxml2)
+    // The XmlPull API and the kXML parser are needed to compile and to test. At runtime :app
+    // supplies the parser through :xmlparser (see that module for why).
+    compileOnly(libs.kxml2)
+    testImplementation(libs.kxml2)
     testImplementation(libs.junit)
 }
 

@@ -25,4 +25,6 @@ dependencyResolutionManagement {
 rootProject.name = "TAKwave"
 include(":app")
 include(":core")
+include(":usbserial")
+include(":xmlparser")
  
