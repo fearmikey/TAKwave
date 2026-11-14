@@ -1,16 +1,74 @@
+# ---------------------------------------------------------------------------
+# Build output and IDE state
+# ---------------------------------------------------------------------------
 *.iml
 .gradle
 .kotlin
-/local.properties
 /.idea
 .DS_Store
 build/
 /captures
 .externalNativeBuild
 .cxx
+
+# ---------------------------------------------------------------------------
+# Machine-specific config (contains local SDK paths / home directory)
+# ---------------------------------------------------------------------------
 local.properties
 
-# Release signing material must never be committed.
+# ---------------------------------------------------------------------------
+# Release signing material: must NEVER be committed
+# ---------------------------------------------------------------------------
 keystore.properties
+signing.properties
 *.jks
 *.keystore
+*.bks
+
+# Signed release artifacts (uploaded to GitHub Releases, not committed).
+# Android Studio's "Generate Signed APK" writes to app/release/.
+/app/release/
+*.apk
+*.aab
+*.apks
+*.idsig
+
+# ---------------------------------------------------------------------------
+# Cryptographic keys and certificates (payload encryption keys, TAK certs)
+# See README "Encryption": generated team-*.pem files must stay private.
+# ---------------------------------------------------------------------------
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.csr
+
+# ---------------------------------------------------------------------------
+# Secrets, credentials and environment files
+# ---------------------------------------------------------------------------
+.env
+.env.*
+secrets.properties
+*.secret
+*credentials*.json
+service-account*.json
+
+# ---------------------------------------------------------------------------
+# Files that may contain personal data (callsigns, locations, device info)
+# ---------------------------------------------------------------------------
+# Exported TAK data packages (TAKwave.zip from the Share screen)
+TAKwave*.zip
+# Logs, heap dumps and bug reports
+*.log
+*.hprof
+bugreport*.zip
+bugreport*.txt
+
+# ---------------------------------------------------------------------------
+# Local AI-agent settings (may contain local paths / personal preferences)
+# ---------------------------------------------------------------------------
+.claude/settings.local.json
