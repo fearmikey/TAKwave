@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<event version="2.0" uid="ANDROID-589520ccfcd20f01" type="a-f-G-U-C" time="2026-11-14T18:00:00.000Z" start="2026-11-14T18:00:00.000Z" stale="2026-11-14T18:03:00.000Z" how="m-g"><point lat="41.5012345" lon="-71.3098765" hae="24.0" ce="10.0" le="9999999.0"/><detail><contact callsign="NOVA" endpoint="*:-1:stcp"/><uid Droid="NOVA"/><__group name="Cyan" role="Team Member"/><status battery="98"/><track speed="1.2" course="45.0"/><__takwave rx="1"/></detail></event>
