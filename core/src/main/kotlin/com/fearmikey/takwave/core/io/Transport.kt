@@ -57,6 +57,9 @@ interface FrameTransport {
     /** Explanation of the most recent failed [send], for the log. */
     val lastError: String?
 
+    /** How long the most recent successful [send] kept the transmitter keyed (an estimate for an external TNC). */
+    val lastAirtimeMs: Long get() = 0L
+
     /** Stops everything and releases the transmitter. */
     fun close()
 }

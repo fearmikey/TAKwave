@@ -15,12 +15,16 @@ import com.fearmikey.takwave.core.codec.PliMessage
 import com.fearmikey.takwave.core.codec.Role
 import com.fearmikey.takwave.core.codec.Team
 import com.fearmikey.takwave.core.gateway.Gateway
+import com.fearmikey.takwave.core.gateway.RxKind
+import com.fearmikey.takwave.core.gateway.TxKind
+import com.fearmikey.takwave.core.sched.RepeatConfig
 import com.fearmikey.takwave.core.gateway.summary
 import com.fearmikey.takwave.core.io.FrameTransport
 import com.fearmikey.takwave.core.io.KissTcpTransport
 import com.fearmikey.takwave.core.io.ModemConfig
 import com.fearmikey.takwave.core.io.NoPtt
 import com.fearmikey.takwave.core.io.Ptt
+import com.fearmikey.takwave.core.io.PttCommand
 import com.fearmikey.takwave.core.io.SoftModemTransport
 import com.fearmikey.takwave.core.modem.AfskModulator
 import com.fearmikey.takwave.core.modem.Bell202
@@ -28,13 +32,18 @@ import com.fearmikey.takwave.core.sched.Clock
 import com.fearmikey.takwave.core.sched.PliConfig
 import com.fearmikey.takwave.core.sched.SlotConfig
 import com.fearmikey.takwave.core.sched.SlotSchedule
+import com.fearmikey.takwave.core.stats.ChannelEvent
+import com.fearmikey.takwave.core.stats.ChannelStats
+import com.fearmikey.takwave.data.Fx25Mode
 import com.fearmikey.takwave.data.KeyFiles
+import com.fearmikey.takwave.data.StateFile
 import com.fearmikey.takwave.data.TimeSource
 import com.fearmikey.takwave.data.EncryptionMode
 import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.PttMethod
 import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.net.CotServer
+import com.fearmikey.takwave.ptt.BluetoothPtt
 import com.fearmikey.takwave.ptt.SerialPtt
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -61,6 +70,7 @@ class RadioEngine(
     private val status: MutableStateFlow<RadioStatus>,
     private val log: PacketLog,
     private val keyFiles: KeyFiles,
+    private val stateFile: StateFile,
 ) {
     /** Correction added to the phone clock to get GNSS time; 0 until a GNSS time is available. */
     @Volatile private var clockOffsetMs = 0L
@@ -80,10 +90,22 @@ class RadioEngine(
     private var audioSource: AndroidAudioSource? = null
     private var audioSink: AndroidAudioSink? = null
     private var serialPtt: SerialPtt? = null
+    private var bluetoothPtt: BluetoothPtt? = null
     private var txThread: Thread? = null
     private var tickThread: Thread? = null
     private var backendInfo = ""
     private var cipherInfo = ""
+    private var repeatInfo = ""
+
+    private val stats = ChannelStats(Clock.SYSTEM)
+    private var lastSampleMs = 0L
+    private var lastFecRecovered = 0L
+    private var lastQueueDropped = 0
+
+    /** Set once the previous run's store-and-forward state has been read, so an empty gateway never overwrites it. */
+    @Volatile private var stateRestored = false
+    private var lastSavedState: ByteArray? = null
+    private var lastSaveMs = 0L
 
     /** Brings everything up on a worker thread (opening audio and USB can block). */
     fun start() {
@@ -122,8 +144,28 @@ class RadioEngine(
                     distanceM = settings.pliDistanceM.toDouble(),
                     headingDeg = settings.pliHeadingDeg,
                 ),
+                repeatConfig = RepeatConfig(
+                    resendOwn = settings.resendOwn,
+                    relay = settings.relay,
+                    holdMs = settings.repeatHoldMin * 60_000L,
+                    maxRepeats = settings.repeatMax,
+                    minGapMs = settings.repeatGapS * 1000L,
+                    budgetPer10Min = settings.repeatBudget,
+                ),
             )
             gateway = gw
+            restoreState(gw)
+            repeatInfo = when {
+                settings.relay -> "Store and forward: relay station"
+                settings.resendOwn -> "Store and forward: own messages"
+                else -> ""
+            }
+            if (settings.relay) {
+                info(
+                    "Relay on: chat and markers heard from other stations are passed on, at most " +
+                        "${settings.repeatBudget} repeats per 10 minutes.",
+                )
+            }
 
             val srv = CotServer(
                 port = settings.takPort,
@@ -144,6 +186,7 @@ class RadioEngine(
                     ModemBackend.SOFT -> buildSoftModem()
                     ModemBackend.KISS_TCP -> {
                         backendInfo = "KISS TNC ${settings.kissHost}:${settings.kissPort}"
+                        if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is set up in the TNC itself when using KISS; the FX.25 setting is not used.")
                         KissTcpTransport(settings.kissHost, settings.kissPort)
                     }
                 }
@@ -188,11 +231,30 @@ class RadioEngine(
                 warn("Serial PTT unavailable: ${e.message}. Transmitting is disabled.")
                 NoPtt
             }
+            PttMethod.BLUETOOTH -> try {
+                val key = try {
+                    PttCommand.parse(settings.btKeyText)
+                } catch (e: IllegalArgumentException) {
+                    error("the key command is not valid (${e.message})")
+                }
+                val unkey = try {
+                    PttCommand.parse(settings.btUnkeyText)
+                } catch (e: IllegalArgumentException) {
+                    error("the unkey command is not valid (${e.message})")
+                }
+                BluetoothPtt.open(context, settings.btPttDevice, key, unkey) { onBluetoothPttLost() }.also { bluetoothPtt = it }
+            } catch (e: Exception) {
+                // Same rule as serial PTT: never play audio into a radio that cannot be keyed.
+                pttLost = true
+                warn("Bluetooth PTT unavailable: ${e.message}. Transmitting is disabled.")
+                NoPtt
+            }
             PttMethod.VOX, PttMethod.NONE -> NoPtt
         }
         val source = AndroidAudioSource(context, input).also { audioSource = it }
         val sink = AndroidAudioSink(output).also { audioSink = it }
-        backendInfo = "Soft modem, PTT: ${settings.pttMethod.label}"
+        backendInfo = "Soft modem, PTT: ${settings.pttMethod.label}" +
+            if (settings.fx25 != Fx25Mode.OFF) ", FX.25 (${settings.fx25.checkBytes} check bytes)" else ""
         val slots = if (settings.slotted) buildSlots() else null
         return SoftModemTransport(
             source, sink, ptt,
@@ -206,6 +268,7 @@ class RadioEngine(
                 persistence = settings.persistence,
                 energyThreshold = settings.energyThreshold / 100f,
                 txTimeoutMs = settings.txTimeoutS * 1000,
+                fx25CheckBytes = settings.fx25.checkBytes,
             ),
         ).also { softModem = it }
     }
@@ -265,11 +328,25 @@ class RadioEngine(
         val hex = PacketCodec.toHex(frame)
         if (outcome.xml != null && outcome.message != null) {
             val lock = if (outcome.encrypted) " [encrypted]" else ""
-            log.add(LogKind.RX, "${outcome.source}: ${outcome.message!!.summary()}$lock", hex, frame.size)
+            val via = if (outcome.relayed) " [relayed]" else ""
+            val age = when {
+                outcome.ageS <= 0 -> ""
+                outcome.ageS < 120 -> " [sent ${outcome.ageS} s ago]"
+                else -> " [sent ${outcome.ageS / 60} min ago]"
+            }
+            log.add(LogKind.RX, "${outcome.source}: ${outcome.message!!.summary()}$lock$via$age", hex, frame.size)
             server?.sendToAll(outcome.xml!!)
         } else {
             log.add(LogKind.RX, "${outcome.source ?: "?"}: dropped (${outcome.note})", hex, frame.size)
         }
+        stats.count(
+            when (outcome.kind) {
+                RxKind.DELIVERED -> ChannelEvent.RX_DELIVERED
+                RxKind.REPEAT -> ChannelEvent.RX_REPEAT
+                RxKind.OTHER -> ChannelEvent.RX_OTHER
+                RxKind.INVALID -> ChannelEvent.RX_INVALID
+            },
+        )
     }
 
     private fun transmitLoop(gw: Gateway, tr: FrameTransport) {
@@ -281,8 +358,15 @@ class RadioEngine(
                     continue
                 }
                 if (tr.send(item.frame)) {
-                    log.add(LogKind.TX, item.message.summary(), PacketCodec.toHex(item.frame), item.frame.size)
+                    stats.recordTx(tr.lastAirtimeMs, repeat = item.kind != TxKind.NEW)
+                    val prefix = when (item.kind) {
+                        TxKind.NEW -> ""
+                        TxKind.RESEND -> "[resend] "
+                        TxKind.RELAY -> "[relay] "
+                    }
+                    log.add(LogKind.TX, prefix + item.message.summary(), PacketCodec.toHex(item.frame), item.frame.size)
                 } else {
+                    stats.count(ChannelEvent.TX_FAILED)
                     log.add(LogKind.ERROR, "TX failed: ${tr.lastError} (${item.message.summary()})")
                     Thread.sleep(IDLE_POLL_MS)
                 }
@@ -297,12 +381,67 @@ class RadioEngine(
 
     private fun tickLoop() {
         while (running) {
+            sampleStats()
             publish()
+            val now = System.currentTimeMillis()
+            if (now - lastSaveMs >= SAVE_PERIOD_MS) {
+                lastSaveMs = now
+                saveState()
+            }
             try {
                 Thread.sleep(STATUS_PERIOD_MS)
             } catch (e: InterruptedException) {
                 return
             }
+        }
+    }
+
+    /** Feeds the channel statistics: listening time (soft modem only) and counters kept elsewhere. */
+    private fun sampleStats() {
+        val now = System.currentTimeMillis()
+        val elapsed = if (lastSampleMs == 0L) 0L else (now - lastSampleMs).coerceAtMost(1_000L)
+        lastSampleMs = now
+        val modem = softModem
+        if (modem != null) {
+            // While transmitting the receiver is deaf, so that time is neither busy nor idle.
+            when (modem.state) {
+                com.fearmikey.takwave.core.io.RfState.TX -> {}
+                com.fearmikey.takwave.core.io.RfState.RX -> stats.sampleChannel(elapsed, busy = true)
+                com.fearmikey.takwave.core.io.RfState.IDLE -> stats.sampleChannel(elapsed, busy = false)
+            }
+            val fec = modem.fecRecovered
+            stats.count(ChannelEvent.RX_REPAIRED, (fec - lastFecRecovered).toInt())
+            lastFecRecovered = fec
+        }
+        val dropped = gateway?.queueDropped ?: 0
+        stats.count(ChannelEvent.QUEUE_DROPPED, dropped - lastQueueDropped)
+        lastQueueDropped = dropped
+    }
+
+    // ---- Store-and-forward persistence ----
+
+    private fun restoreState(gw: Gateway) {
+        val saved = stateFile.read()
+        if (saved != null) {
+            val result = gw.restoreState(saved)
+            if (result.held > 0) info("Store and forward: ${result.held} held message(s) restored from the last session.")
+            result.note?.let { info("Store and forward: $it.") }
+        }
+        stateRestored = true
+    }
+
+    /** Writes held messages to storage when they changed. Called from the status thread and on stop. */
+    @Synchronized
+    private fun saveState() {
+        val gw = gateway ?: return
+        if (!stateRestored) return
+        try {
+            val state = gw.saveState()
+            if (lastSavedState?.contentEquals(state) == true) return
+            stateFile.write(state)
+            lastSavedState = state
+        } catch (e: Exception) {
+            Log.w(TAG, "saving store-and-forward state", e)
         }
     }
 
@@ -317,6 +456,8 @@ class RadioEngine(
             level = tr?.inputLevel ?: 0f,
             peak = softModem?.inputPeak ?: 0f,
             queueDepth = gw?.queueDepth ?: 0,
+            heldCount = gw?.heldCount ?: 0,
+            repeatInfo = repeatInfo,
             heard = gw?.heardStations() ?: emptyList(),
             localPosition = gw?.localPosition,
             softModem = softModem != null,
@@ -325,6 +466,9 @@ class RadioEngine(
             cipherInfo = cipherInfo,
             slotInfo = if (slotInfo.isEmpty()) "" else "$slotInfo; $timeInfo",
             warnings = synchronized(warnings) { warnings.toList() },
+            ownAlerts = gw?.ownAlerts() ?: emptyList(),
+            heardAlerts = gw?.heardAlerts() ?: emptyList(),
+            health = stats.snapshot(),
         )
     }
 
@@ -391,6 +535,16 @@ class RadioEngine(
         warn("PTT adapter unplugged. Transmitting is disabled until the service is restarted.")
     }
 
+    /**
+     * Called from the Bluetooth PTT thread when the serial link drops. The unkey command can no
+     * longer reach the radio, so all that can be done is to stop sending audio and stop keying.
+     */
+    private fun onBluetoothPttLost() {
+        pttLost = true
+        audioSink?.abort()
+        if (running) warn("Bluetooth PTT link lost. Transmitting is disabled until the service is restarted.")
+    }
+
     fun stop() {
         if (!running) return
         running = false
@@ -404,7 +558,10 @@ class RadioEngine(
 
     private fun releaseAll() {
         try { transport?.close() } catch (e: Exception) { Log.w(TAG, "transport close", e) }
+        // After the transmitter is released: keep what store and forward was holding for next time.
+        saveState()
         try { serialPtt?.close() } catch (e: Exception) { Log.w(TAG, "ptt close", e) }
+        try { bluetoothPtt?.close() } catch (e: Exception) { Log.w(TAG, "bluetooth ptt close", e) }
         try { server?.stop() } catch (e: Exception) { Log.w(TAG, "server stop", e) }
         try { audioSource?.close() } catch (e: Exception) { Log.w(TAG, "audio in close", e) }
         try { audioSink?.close() } catch (e: Exception) { Log.w(TAG, "audio out close", e) }
@@ -422,5 +579,6 @@ class RadioEngine(
         const val IDLE_POLL_MS = 100L
         const val STATUS_PERIOD_MS = 100L
         const val GNSS_CHECK_PERIOD_MS = 30_000L
+        const val SAVE_PERIOD_MS = 30_000L
     }
 }

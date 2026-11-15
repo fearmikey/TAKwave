@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<event version="2.0" uid="ANDROID-589520ccfcd20f01-9-1-1" type="b-a-o-can" time="2026-11-14T18:05:00.000Z" start="2026-11-14T18:05:00.000Z" stale="2026-11-14T18:05:20.000Z" how="h-e"><point lat="41.5012345" lon="-71.3054321" hae="12.0" ce="9999999.0" le="9999999.0"/><detail><link uid="ANDROID-589520ccfcd20f01" type="a-f-G-U-C" relation="p-p"/><contact callsign="NOVA-Alert"/><emergency cancel="true">NOVA</emergency></detail></event>

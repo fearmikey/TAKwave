@@ -20,11 +20,21 @@ object Wire {
     const val TYPE_PLI = 1
     const val TYPE_CHAT = 2
     const val TYPE_MARKER = 3
+    const val TYPE_EMERGENCY = 4
     const val TYPE_MASK = 0x0F
     const val FLAG_ENCRYPTED = 0x80
     /** Bits 6-4 of byte 1 carry the cipher suite of an encrypted packet. */
     const val SUITE_SHIFT = 4
     const val SUITE_MASK = 0x07
+    /** Optional extension byte after a message body (PROTOCOL.md 4.4). Bits 3-0: how many times the packet was relayed. */
+    const val EXT_HOPS_MASK = 0x0F
+    /** Extension bit 4: a uint16 age in seconds follows the extension byte. */
+    const val EXT_AGE = 0x10
+    /** Extension bit 5: a one-byte position report counter follows (after the age, when both are present). */
+    const val EXT_SEQ = 0x20
+    const val MAX_AGE_S = 0xFFFF
+    /** Extension byte plus age; kept free in every chat so a repeat never has to shorten the text. */
+    const val EXT_MAX_SIZE = 3
 
     /** AX.25 default maximum information field. */
     const val MAX_PAYLOAD = 256
@@ -36,6 +46,8 @@ object Wire {
     const val MAX_CHAT_TEXT = 200
     const val MAX_MARKER_NAME = 32
     const val MAX_REMARKS = 80
+    const val MAX_ALERT_CALLSIGN = 32
+    const val MAX_ALERT_TEXT = 20
 
     const val ID_RAW = 0
     const val ID_ANDROID = 1
@@ -48,6 +60,9 @@ object Wire {
 
     const val MARKER_HAS_REMARKS = 0x01
     const val MARKER_HAS_COLOR = 0x02
+
+    /** Emergency flag bit 0: the alert uid is not `<sender uid>-9-1-1` and follows as an Identifier. */
+    const val ALERT_LITERAL_UID = 0x01
 
     const val UNKNOWN_U16 = 0xFFFF
     const val UNKNOWN_U8 = 0xFF
@@ -142,13 +157,30 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
     /** Description of the active cipher for the UI, or null when sending in the clear. */
     val cipherDescription: String? get() = crypto?.description
 
-    fun encode(message: TakMessage): ByteArray {
+    /**
+     * @param hops 0 for the station's own traffic; 1 when relaying a message heard from another station.
+     * @param ageS for a repeat, seconds since the author first sent the message; null for a first transmission.
+     * @param seq the station's position report counter (0-255); only position reports carry it.
+     * The extension (PROTOCOL.md 4.4) is appended only when one of these is set.
+     */
+    fun encode(message: TakMessage, hops: Int = 0, ageS: Int? = null, seq: Int? = null): ByteArray {
         val overhead = if (crypto != null) crypto.overhead + 1 else 0
         val w = ByteWriter()
         val type = when (message) {
             is PliMessage -> { writePli(w, message); Wire.TYPE_PLI }
-            is ChatMessage -> { writeChat(w, message, Wire.MAX_PAYLOAD - 2 - overhead); Wire.TYPE_CHAT }
+            // Room is always kept for the extension, so a repeat carries exactly the same text.
+            is ChatMessage -> { writeChat(w, message, Wire.MAX_PAYLOAD - 2 - overhead - Wire.EXT_MAX_SIZE); Wire.TYPE_CHAT }
             is MarkerMessage -> { writeMarker(w, message); Wire.TYPE_MARKER }
+            is EmergencyMessage -> { writeEmergency(w, message); Wire.TYPE_EMERGENCY }
+        }
+        if (hops > 0 || ageS != null || seq != null) {
+            w.u8(
+                hops.coerceIn(0, Wire.EXT_HOPS_MASK) or
+                    (if (ageS != null) Wire.EXT_AGE else 0) or
+                    (if (seq != null) Wire.EXT_SEQ else 0),
+            )
+            if (ageS != null) w.u16(ageS.coerceIn(0, Wire.MAX_AGE_S))
+            if (seq != null) w.u8(seq)
         }
         val body = w.toByteArray()
         val version = (Wire.MAGIC + Wire.VERSION).toByte()
@@ -206,9 +238,20 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
             Wire.TYPE_PLI -> readPli(reader)
             Wire.TYPE_CHAT -> readChat(reader)
             Wire.TYPE_MARKER -> readMarker(reader)
+            Wire.TYPE_EMERGENCY -> readEmergency(reader)
             else -> return DecodeResult.Error("unknown message type $type")
         }
-        return DecodeResult.Ok(message, encrypted)
+        // The first byte after the body, when present, is the extension byte. Anything after it is ignored.
+        var hops = 0
+        var ageS = 0
+        var seq: Int? = null
+        if (reader.remaining > 0) {
+            val ext = reader.u8()
+            hops = ext and Wire.EXT_HOPS_MASK
+            if (ext and Wire.EXT_AGE != 0) ageS = reader.u16()
+            if (ext and Wire.EXT_SEQ != 0) seq = reader.u8()
+        }
+        return DecodeResult.Ok(message, encrypted, hops, ageS, seq)
     }
 
     // ---- PLI ----
@@ -310,6 +353,34 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
         val remarks = if (flags and Wire.MARKER_HAS_REMARKS != 0) r.string(Wire.MAX_REMARKS) else null
         val color = if (flags and Wire.MARKER_HAS_COLOR != 0) r.i32() else null
         return MarkerMessage(uid, type, name, lat, lon, hae, remarks, color)
+    }
+
+    // ---- Emergency ----
+
+    private fun writeEmergency(w: ByteWriter, m: EmergencyMessage) {
+        writeId(w, m.senderUid)
+        w.u8(m.kind.ordinal)
+        val conventional = m.uid == m.senderUid + EmergencyMessage.UID_SUFFIX
+        w.u8(if (conventional) 0 else Wire.ALERT_LITERAL_UID)
+        if (!conventional) writeId(w, m.uid)
+        w.string(m.callsign, Wire.MAX_ALERT_CALLSIGN)
+        w.string(m.text, Wire.MAX_ALERT_TEXT)
+        w.i32(m.latE7)
+        w.i32(m.lonE7)
+        w.u16(m.haeM?.coerceIn(-32767, 32767) ?: Wire.UNKNOWN_HAE)
+    }
+
+    private fun readEmergency(r: ByteReader): EmergencyMessage {
+        val senderUid = readId(r)
+        val kind = EmergencyKind.fromCode(r.u8())
+        val flags = r.u8()
+        val uid = if (flags and Wire.ALERT_LITERAL_UID != 0) readId(r) else senderUid + EmergencyMessage.UID_SUFFIX
+        val callsign = r.string(Wire.MAX_ALERT_CALLSIGN)
+        val text = r.string(Wire.MAX_ALERT_TEXT)
+        val lat = readLat(r)
+        val lon = readLon(r)
+        val hae = r.i16().takeIf { it != Wire.UNKNOWN_HAE }
+        return EmergencyMessage(uid, senderUid, kind, callsign, text, lat, lon, hae)
     }
 
     // ---- Shared field encodings ----

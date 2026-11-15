@@ -7,6 +7,71 @@ All notable changes to TAKwave are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-15
+
+Over-air protocol still version 0, with additive changes only: an extension carrying hop count
+and age on repeated packets and a report counter on position reports (`docs/PROTOCOL.md` 4.4),
+a new Emergency message type (4.5), and optional FX.25 framing (section 1). Receivers that
+predate them ignore the extension and drop emergency packets.
+
+### Added
+
+- **About tab:** app version, developer, links to the GitHub repository, the issue tracker
+  and Buy Me a Coffee. Links open in the browser only when tapped.
+- **Emergency alerts:** ATAK's 911, Ring The Bell, In Contact, geo-fence and custom alerts, and
+  their cancellation, go on the air ahead of all other traffic. An active alert is repeated every
+  30 s with the latest position until it is cancelled in ATAK; the cancel is sent three times.
+  Relay stations pass alerts on. Alerts heard from others show as red cards on the Status tab
+  and in the notification, with distance and bearing. An old copy of an alert can never undo its
+  cancellation.
+- **FX.25 forward error correction:** FX.25 packets are always received and repaired (compatible
+  with Dire Wolf). Sending with 16, 32 or 64 check bytes is a new setting, off by default. In
+  simulation, at a noise level where plain AX.25 decodes 17.5% of packets, FX.25 with 32 check
+  bytes decodes 99.5%.
+- **Channel health** on the Status tab: channel busy, own air time, packets delivered, repeated,
+  repaired by FX.25, other traffic and unreadable, failed sends and queue drops over the last
+  10 minutes, with hints when the channel is congested. The Heard list shows the share of each
+  station's position reports that arrived (from a new report counter in position reports).
+- **Team profiles:** share the settings a team must agree on (position report pacing, channel
+  access, time slots with per-callsign slot numbers, store-and-forward limits, FX.25, encryption
+  mode) as a QR code, a file or text, and load one from a `takwave://` link, a file or the
+  clipboard. Keys and passphrases are never included. TAKwave lists every change and asks before
+  applying a profile.
+- **Store and forward survives a restart:** held messages, the list of messages already seen and
+  the repeat budget are saved and restored, so a restart neither loses waiting messages nor shows
+  repeats twice. Held messages are dropped if encryption was switched on or off in between.
+
+- **Store and forward** for chat and markers, so teammates who were out of range still get
+  them:
+  - *Send my messages again* (on by default): a station re-sends its own chat and markers when
+    it hears a station that was not in range when they were sent. Direct messages are re-sent
+    only for their recipient.
+  - *Relay for other stations* (off by default): a well-placed station passes on chat and
+    markers it hears from others, under its own callsign. Relayed packets are marked and never
+    relayed again.
+  - Limits on hold time, repeats per message, gap between repeats and repeats per 10 minutes,
+    all adjustable. New traffic always goes first. Position reports are never repeated.
+  - Re-sent and relayed messages arrive in ATAK with the time they were written, not the time
+    the copy arrived. A relay that missed a marker edit cannot bring back the old version.
+  - Repeats already received are not shown in ATAK a second time. The Log tab marks re-sent,
+    relayed and received-via-relay packets, with how long ago they were written.
+
+## [0.2.0] - 2026-11-14
+
+Over-air protocol unchanged (version 0).
+
+### Added
+
+- **Bluetooth serial PTT:** key the radio by sending a command over a Bluetooth serial (SPP)
+  link to a paired radio or adapter. Presets for Kenwood/Elecraft and Yaesu CAT, or custom
+  key and unkey commands (with `\r`, `\n` and `\xHH` escapes). Transmitting is disabled if the
+  link cannot be opened or drops. Audio still uses a cable or USB sound card. Radios that only
+  pair with a Bluetooth earpiece (headset profile) are not supported.
+- **Setup guide** on first start: walks through the permissions, then offers a quick start
+  that asks for the callsign, how the radio is connected, and only the settings that setup
+  needs. It can be run again from the Settings tab.
+- **Info buttons** next to each settings category that explain it in plain language.
+
 ## [0.1.0] - 2026-11-14
 
 First release. Over-air protocol version 0.
@@ -45,5 +110,7 @@ First release. Over-air protocol version 0.
 
 - Not yet verified on physical phones and radios. See `docs/TODO.md`.
 
-[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/fearmikey/TAKwave/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/fearmikey/TAKwave/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/fearmikey/TAKwave/releases/tag/v0.1.0

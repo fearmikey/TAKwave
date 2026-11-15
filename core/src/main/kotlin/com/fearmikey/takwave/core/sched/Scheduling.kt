@@ -2,6 +2,7 @@
 package com.fearmikey.takwave.core.sched
 
 import com.fearmikey.takwave.core.codec.ChatMessage
+import com.fearmikey.takwave.core.codec.EmergencyMessage
 import com.fearmikey.takwave.core.codec.MarkerMessage
 import com.fearmikey.takwave.core.codec.PliMessage
 import com.fearmikey.takwave.core.codec.TakMessage
@@ -125,8 +126,9 @@ class PliScheduler(private val config: PliConfig = PliConfig()) {
 }
 
 /**
- * Transmit queue. Chat goes first, then markers, then PLI; first-in first-out within a class.
- * A newer PLI or marker replaces a queued one for the same uid. Entries older than [maxAgeMs]
+ * Transmit queue. Emergency alerts go first, then chat, then markers, then PLI; first-in
+ * first-out within a class. A newer PLI, marker or alert replaces a queued one for the same uid
+ * (so a cancel replaces the alert it cancels). Entries older than [maxAgeMs]
  * are dropped instead of sent. When full, the least important oldest entry makes room.
  */
 class TxQueue(private val maxSize: Int = 32, private val maxAgeMs: Long = 120_000) {
@@ -142,6 +144,7 @@ class TxQueue(private val maxSize: Int = 32, private val maxAgeMs: Long = 120_00
         @Synchronized get() = entries.size
 
     private fun priority(m: TakMessage): Int = when (m) {
+        is EmergencyMessage -> 3
         is ChatMessage -> 2
         is MarkerMessage -> 1
         is PliMessage -> 0
@@ -192,9 +195,9 @@ class TxQueue(private val maxSize: Int = 32, private val maxAgeMs: Long = 120_00
 /**
  * Remembers what arrived from RF so that it is never transmitted again.
  *
- * PLI uids and chat message ids heard on the air are blocked outright. A marker heard on the
- * air is blocked only while its content is unchanged, so a local user can still edit a received
- * marker and share the edit.
+ * PLI uids, chat message ids and alert uids heard on the air are blocked outright. A marker
+ * heard on the air is blocked only while its content is unchanged, so a local user can still
+ * edit a received marker and share the edit.
  */
 class LoopGuard(private val ttlMs: Long = 10 * 60 * 1000L, private val maxEntries: Int = 2048) {
     private class Seen(val message: TakMessage, val atMs: Long)
@@ -207,6 +210,7 @@ class LoopGuard(private val ttlMs: Long = 10 * 60 * 1000L, private val maxEntrie
         is PliMessage -> "P:${m.key}"
         is ChatMessage -> "C:${m.key}"
         is MarkerMessage -> "M:${m.key}"
+        is EmergencyMessage -> "E:${m.key}"
     }
 
     @Synchronized

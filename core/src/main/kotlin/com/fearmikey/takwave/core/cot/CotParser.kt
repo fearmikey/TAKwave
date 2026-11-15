@@ -17,6 +17,7 @@ object CotParser {
     const val MAX_EVENT_CHARS = 64 * 1024
     private const val MAX_DEPTH = 16
     private const val MAX_TEXT = 8 * 1024
+    private const val MAX_SHORT_TEXT = 256
 
     fun parse(xml: String): CotEvent? {
         if (xml.length > MAX_EVENT_CHARS) return null
@@ -67,6 +68,11 @@ object CotParser {
         var color: Int? = null
         var hasUserIcon = false
         var hasArchive = false
+        var hasEmergency = false
+        var emergencyType: String? = null
+        var emergencyCancel = false
+        var emergencyText: StringBuilder? = null
+        var inEmergency = false
         var fromRf = false
         var sawEvent = false
         var closed = false
@@ -125,6 +131,13 @@ object CotParser {
                             "color" -> color = p.getAttributeValue(null, "argb")?.toLongOrNull()?.toInt()
                             "usericon" -> hasUserIcon = true
                             "archive" -> hasArchive = true
+                            "emergency" -> {
+                                hasEmergency = true
+                                inEmergency = true
+                                emergencyType = p.getAttributeValue(null, "type")
+                                emergencyCancel = p.getAttributeValue(null, "cancel").equals("true", ignoreCase = true)
+                                if (emergencyText == null) emergencyText = StringBuilder()
+                            }
                             "__takwave" -> fromRf = true
                         }
                         depth == 4 && inDetail && name == "chatgrp" -> chatUid0 = p.getAttributeValue(null, "uid0")
@@ -135,9 +148,16 @@ object CotParser {
                     if (inRemarks && p.depth == 3 && sb != null && sb.length < MAX_TEXT) {
                         sb.append(p.text, 0, minOf(p.text.length, MAX_TEXT - sb.length))
                     }
+                    val eb = emergencyText
+                    if (inEmergency && p.depth == 3 && eb != null && eb.length < MAX_SHORT_TEXT) {
+                        eb.append(p.text, 0, minOf(p.text.length, MAX_SHORT_TEXT - eb.length))
+                    }
                 }
                 XmlPullParser.END_TAG -> {
-                    if (p.depth == 3) inRemarks = false
+                    if (p.depth == 3) {
+                        inRemarks = false
+                        inEmergency = false
+                    }
                     if (p.depth == 2 && p.name == "detail") inDetail = false
                     // Stop at the end of the first event; anything after it is not ours.
                     if (p.depth == 1) {
@@ -161,6 +181,7 @@ object CotParser {
             remarks = remarks?.toString(),
             chat = if (hasChat) ChatDetail(chatId, chatroom, chatSender, chatMsgId, chatUid0) else null,
             linkUid = linkUid, colorArgb = color, hasUserIcon = hasUserIcon, hasArchive = hasArchive,
+            emergency = if (hasEmergency) EmergencyDetail(emergencyType, emergencyCancel, emergencyText?.toString()?.trim()) else null,
             fromRf = fromRf,
         )
     }

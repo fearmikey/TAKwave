@@ -2,6 +2,8 @@
 package com.fearmikey.takwave.core.cot
 
 import com.fearmikey.takwave.core.codec.ChatMessage
+import com.fearmikey.takwave.core.codec.EmergencyKind
+import com.fearmikey.takwave.core.codec.EmergencyMessage
 import com.fearmikey.takwave.core.codec.MarkerMessage
 import com.fearmikey.takwave.core.codec.PliMessage
 import com.fearmikey.takwave.core.codec.Role
@@ -30,6 +32,7 @@ object CotMapper {
         if (e.type == CotEvent.TYPE_PING) return Classified.Ping
         return when {
             e.type == CotEvent.TYPE_CHAT -> chat(e)
+            e.type.startsWith("b-a-") -> emergency(e)
             e.type.startsWith("b-m-p") -> Classified.Send(marker(e))
             e.type.startsWith("a-") -> when {
                 // A self-report carries the client's software and team details.
@@ -68,6 +71,28 @@ object CotMapper {
         remarks = e.remarks?.trim()?.takeIf { it.isNotEmpty() },
         colorArgb = e.colorArgb,
     )
+
+    /** An ATAK alert (911, Ring The Bell, In Contact, geo-fence, custom) or its cancellation. */
+    private fun emergency(e: CotEvent): Classified {
+        val kind = if (e.emergency?.cancel == true) EmergencyKind.CANCEL
+        else EmergencyKind.fromCotType(e.type) ?: return Classified.Drop("alert type '${e.type}' is not carried over RF")
+        // The link names the person in distress; failing that, ATAK's uid convention does.
+        val senderUid = e.linkUid?.takeIf { it.isNotEmpty() }
+            ?: e.uid.removeSuffix(EmergencyMessage.UID_SUFFIX)
+        val text = e.emergency?.text?.takeIf { it.isNotEmpty() } ?: e.callsign?.removeSuffix("-Alert") ?: ""
+        return Classified.Send(
+            EmergencyMessage(
+                uid = e.uid,
+                senderUid = senderUid,
+                kind = kind,
+                callsign = e.callsign ?: "$text-Alert",
+                text = text,
+                latE7 = e7(e.lat),
+                lonE7 = e7(e.lon),
+                haeM = metres(e.hae, 32767.0),
+            ),
+        )
+    }
 
     private fun chat(e: CotEvent): Classified {
         val c = e.chat

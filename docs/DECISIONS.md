@@ -153,3 +153,135 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
 62. **`AGENTS.md` was adapted from the owner's Garage project** when the spec referred to a
     file that was not yet in this repository.
 63. **Commits are made per phase with no AI attribution; nothing is pushed or tagged.**
+
+## Bluetooth PTT and setup guide
+
+64. **Bluetooth PTT is a serial (SPP) link carrying key and unkey commands,** because that is
+    the only Bluetooth keying an Android app can do with public APIs. Android's RFCOMM socket
+    does not expose RTS/DTR, so control lines cannot be toggled as with USB serial. Radios
+    that only pair with a Bluetooth earpiece or PTT button (the Ailunce HD2's manual describes
+    nothing else) expect the other side to be a headset; Android offers apps no way to take
+    the hands-free role, so those radios cannot be keyed directly.
+65. **Only already-paired devices are listed,** so the app needs `BLUETOOTH_CONNECT` (and the
+    legacy `BLUETOOTH` up to Android 11) but neither a scan nor a location permission. A
+    device must be chosen explicitly; there is no "first device found" as with USB, since
+    commands must never go to an unrelated paired device.
+66. **When the Bluetooth link cannot be opened or drops, transmitting is disabled,** as with
+    serial PTT. A dropped link cannot carry the unkey command, so the UI tells the operator
+    to set the radio's own time-out timer. Only PTT uses Bluetooth; audio does not.
+67. **Command syntax is parsed in `:core`** (`PttCommand`) so it is unit-tested; an invalid
+    command disables transmitting rather than sending something else.
+68. **The setup guide writes straight to the settings store** with the same controls as the
+    Settings tab, and is shown until it is finished or skipped (`onboardingDone`). The info
+    icon is drawn in code, keeping the no-icon-font rule (60).
+
+## Store and forward
+
+69. **Two modes, different defaults.** Re-sending one's own chat and markers is on by default:
+    it never puts anyone else's traffic on the air and only triggers when a new station is
+    heard. Relaying other stations' traffic is off by default and meant for one well-placed
+    station; it is the one deliberate exception to "never retransmit RF traffic" (31, AGENTS.md).
+70. **"Missed it" is inferred from presence, without acknowledgements.** A station counts as
+    having had a chance at a message if it was heard within 3 minutes of a transmission of it.
+    Hearing someone proves nothing about them hearing us, so this is best effort; acks would
+    cost a frame per recipient per message on a 1200 baud channel.
+71. **Position reports are never held or relayed.** A stored position is a wrong position, and
+    the next live report replaces it anyway.
+72. **One hop, marked in the packet.** The relay byte is appended after the body (an additive
+    change, no version bump) and a packet that carries it is never relayed again, so loops are
+    impossible regardless of how many relays are on the air. The relay transmits under its own
+    callsign, which keeps station identification correct.
+73. **Every repeat is limited four ways:** hold time (30 min), repeats per message (3), gap
+    between transmissions of one message (2 min, counting copies heard from others) and a
+    station-wide budget (6 per 10 min, about 12 s of air time at worst). Repeats are sent only
+    when the transmit queue is empty, so fresh traffic always wins. The limits are settings so
+    a group can tighten them, within ranges that keep the worst case bounded.
+74. **Hearing another copy cancels a pending repeat,** and relays wait 4 to 10 s at random
+    (authors 2 to 5 s), so the author usually goes first and two relays rarely both transmit.
+75. **A seen-cache keeps repeats out of ATAK.** Chat ids and the newest version of each marker
+    are remembered for 3 hours. A marker written earlier than the newest version is dropped, so
+    a relay that missed an edit cannot undo it.
+76. **Repeats carry the message's age, not a timestamp.** The over-air format has no time
+    field, and an absolute one would need every station's clock to agree. An age in seconds
+    (2 bytes, up to about 18 hours) lets each receiver compute the original time on its own
+    clock, consistent with how it stamps everything else. The error is the time the frame
+    spends waiting for the channel, at most 30 s. First transmissions stay byte-for-byte
+    unchanged; repeats cost 3 bytes (about 20 ms at 1200 baud).
+77. **Rebuilt CoT uses the original time for `time`, `start` and the chat `remarks time`, but
+    stale counts from arrival.** A 20-minute-old chat with a 5-minute stale time measured from
+    when it was written would arrive already stale.
+78. **Relays never change protection.** An encrypting relay passes on only encrypted traffic
+    and a clear relay only clear traffic, so turning on relaying can never leak an encrypted
+    message in the clear (44).
+
+## Emergency alerts
+
+79. **Alerts are their own message type (4), not a marker.** ATAK treats `b-a-*` events
+    specially (alarm, banner), and a cancel must reliably replace the alert, so they get a
+    dedicated body. Adding a type does not bump the version: old receivers drop unknown types
+    (PROTOCOL.md 8.3). ATAK's `<uid>-9-1-1` convention is not sent twice.
+80. **The author repeats an active alert every 30 s** with the latest position until the client
+    cancels it, and sends the cancel three times. One transmission can be lost; an emergency
+    must not be. An alert the client has not reported for 30 minutes is no longer sent, so a
+    crashed or disconnected client does not leave a beacon running forever. At about 0.7 s per
+    copy this is roughly 2% of the channel.
+81. **Alerts go before all other traffic** in the transmit queue and in store and forward.
+82. **Relays pass alerts on** (owner's decision, recorded in AGENTS.md), under the existing
+    single-hop rules and limits. The author's own repeats keep relays quiet once everyone near
+    the relay has heard the author.
+83. **The author's repeats are delivered to ATAK every time**, unlike other repeats, so the alert
+    stays fresh; rebuilt alerts are stale after 10 minutes. A cancel is a newer version of its
+    alert, so an old relayed copy can never bring a cancelled alert back (75).
+84. **An unknown alert kind decodes as Custom** instead of being dropped, unlike unknown CoT
+    types (18): showing a slightly wrong alert beats losing one.
+
+## FX.25
+
+85. **FX.25 is always received and optional on transmit (off by default).** It costs air time
+    (about 1.2x to 1.7x for a position report with the default TXDELAY), and plain receivers
+    still read FX.25 frames, so a mixed fleet works and each operator can decide.
+86. **Compatible with Dire Wolf**: same correlation tags, Reed-Solomon parameters (Karn's
+    library with 0x11D, fcr 1, prim 1), data layout and flag padding, and the same 8-bit tag
+    tolerance. Interoperability with a real Dire Wolf has not been tested on the air yet.
+87. **The Reed-Solomon code is written in Kotlin in `:core`**, not taken from a library, to keep
+    the module dependency-free and unit-tested like the rest of the modem.
+88. **A correction in the unsent zero part of a shortened block rejects the block**: it can only
+    be a miscorrection.
+
+## Channel health
+
+89. **Statistics are kept for 10 minutes in 10-second buckets**, so old activity falls away
+    smoothly. Channel busy is sampled from DCD by the 10 Hz status thread; time spent
+    transmitting counts as neither busy nor idle.
+90. **Per-station loss comes from a one-byte report counter** in the PLI extension (bit 5). It
+    costs 2 bytes per report; old receivers ignore it. A gap over 32 is treated as a restart or
+    long absence rather than loss. Only position reports carry it, because chat must keep its
+    exact text across repeats (76) and the other types are too irregular to measure by.
+91. **"Repaired by FX.25" counts only frames the plain decoders did not get.** An intact frame
+    is decoded at its closing flag, before the check bytes arrive, so the count is honest.
+
+## Team profiles
+
+92. **A profile is a `takwave://profile?...` link**, the same text in a QR code, a file or the
+    clipboard, with one parser. It carries only settings the team must share; never keys,
+    passphrases, radio-specific settings or the relay switch.
+93. **Nothing is applied without confirmation.** Links come from outside the app, so the dialog
+    lists every change, warns when encryption would be turned on, and applies only on "Apply".
+    Any invalid value rejects the whole profile; unknown keys are ignored for forward
+    compatibility; a newer version is refused.
+94. **QR codes are drawn with ZXing core (Apache-2.0)**, generation only. Scanning is left to
+    the phone's camera app or any QR reader, so the app needs no camera permission or code.
+95. **Slot assignments are a table of callsigns**; a station takes its own slot only if it is
+    listed, so one profile serves the whole team.
+
+## Store-and-forward persistence
+
+96. **Held messages and the seen-cache are saved every 30 s when they change, and on stop**, in
+    app-private no-backup storage, written atomically. Messages are stored in their clear
+    over-air encoding, so the file format follows the protocol. They are stored decoded even on
+    an encrypting station (a send-only ECIES station could not read them back otherwise); the
+    file is as private as the key files next to it.
+97. **On restore, held messages are dropped if encryption was switched on or off** since they
+    were saved (78), as are kinds now switched off, messages past the hold time and messages
+    already repeated enough. The repeat budget counts transmissions from before the restart. A
+    damaged file changes nothing.

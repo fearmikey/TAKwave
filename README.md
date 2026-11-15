@@ -8,7 +8,7 @@
 Positions, chat and map markers between ATAK users with no cell service, no mesh hardware and no ATAK plugin.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="Version 0.3.0">
   <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" alt="License GPL-3.0-or-later">
   <img src="https://img.shields.io/badge/Android-10%2B-brightgreen" alt="Android 10+">
   <img src="https://img.shields.io/badge/100%25-FOSS-orange" alt="100% FOSS">
@@ -32,7 +32,7 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
  ATAK ◄──TCP── TAKwave ◄── CoT XML rebuilt ◄── AX.25 ◄── AFSK audio ◄── radio ((((
 ```
 
-> **Status: 0.1.0, first release.** The protocol, modem and gateway logic are covered by a unit
+> **Status: 0.3.0.** The protocol, modem and gateway logic are covered by a unit
 > test suite, and the app builds for debug and release. It has **not yet been tested on real
 > phones and radios**; see [docs/TODO.md](docs/TODO.md). Treat it as a beta.
 
@@ -40,17 +40,25 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
 
 - **Works with stock ATAK-CIV.** No plugin, no plugin signing. Also works with iTAK, WinTAK or
   anything else that can connect to a TCP CoT server.
-- **Carries what matters:** your position (PLI), GeoChat messages, and point markers.
+- **Carries what matters:** your position (PLI), GeoChat messages, point markers, and
+  emergency alerts (911, Ring The Bell, In Contact), which jump the queue and repeat every 30 s
+  until cancelled.
 - **Built for a slow channel.** A position report is about 37 bytes on the air. Reports are
   throttled, chat jumps the queue, stale traffic is dropped.
 - **Software modem.** Bell 202 AFSK 1200 baud, written in Kotlin, with several parallel
-  demodulators so it copes with real handheld audio.
+  demodulators so it copes with real handheld audio. Decodes **FX.25** error-corrected packets
+  (compatible with Dire Wolf) and can send them, so weak packets get repaired instead of lost.
+- **Shows how the channel is doing:** channel busy, your own air time, repaired and lost packets,
+  and how many of each station's position reports arrive.
+- **Team profiles:** share the settings everyone must agree on as a QR code, file or text.
+  Keys are never included, and nothing is applied without confirmation.
 - **Plays fair on a shared channel.** Carrier-sense channel access (p-persistent CSMA), plus
   optional GPS-timed transmit slots so stations take turns.
 - **Radio safe.** Refuses to transmit without a callsign, never re-sends what it heard, and a
   watchdog force-releases PTT.
 - **Hardware you may already own.** A Digirig (or any USB sound card with a serial PTT line), a
-  VOX cable, an external KISS TNC, or nothing at all for a speaker-to-microphone test.
+  VOX cable, PTT by command over a Bluetooth serial link, an external KISS TNC, or nothing at
+  all for a speaker-to-microphone test.
 - **Optional payload encryption for Part 90 use**, with passphrase, key-file, and public-key
   options. Off by default; **not legal on amateur bands**.
 - **100% free software.** No Google Play Services, no analytics, no network access beyond the
@@ -72,7 +80,9 @@ identification, permitted content, band plan, and (on amateur bands) no encrypti
 | Audio interface | [Digirig Mobile](https://digirig.net) recommended: USB sound card plus serial PTT in one |
 | Cables | The Digirig cable for your radio model, and a USB-C OTG cable or adapter |
 
-Alternatives: a simple audio cable with the radio's VOX; an external TNC or
+Alternatives: a simple audio cable with the radio's VOX; an audio cable plus Bluetooth serial
+PTT (a radio or adapter that takes CAT or other key/unkey commands over Bluetooth SPP; radios
+that only pair with a Bluetooth earpiece are not supported); an external TNC or
 [Dire Wolf](https://github.com/wb2osz/direwolf) reached over KISS TCP; or no hardware at all
 for the acoustic test below.
 
@@ -83,6 +93,10 @@ Build from source (see [Building](#building)), or once published, install from F
 ## Quick start
 
 ### 1. Set up TAKwave
+
+On first start a setup guide asks for the permissions and offers a quick start that walks
+through the steps below for your radio. Tap the round **i** next to any heading for an
+explanation. To do it by hand instead, skip the guide:
 
 1. Open TAKwave and go to **Settings**.
 2. Enter your **callsign** and SSID. This is required: every packet carries it in the clear as
@@ -173,7 +187,7 @@ green while the other phone transmits. Red means too loud; grey means too quiet.
 |---|---|
 | Channel rate | 1200 baud, roughly 100 to 150 bytes per second |
 | Position reports | Every 60 s; sooner (but never under 15 s) after moving 50 m or turning 30° while moving |
-| Priority | Chat, then markers, then positions |
+| Priority | Emergency alerts, then chat, then markers, then positions |
 | Stale traffic | Anything queued longer than 2 minutes is dropped |
 | Channel access | Waits for a clear channel, then p-persistent CSMA (slot 100 ms, persistence 63) |
 | TX timeout | 10 s per transmission, then PTT is forced off |

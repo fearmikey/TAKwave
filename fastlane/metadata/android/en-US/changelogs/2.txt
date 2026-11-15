@@ -1,0 +1,3 @@
+• Bluetooth serial PTT: key the radio with CAT or custom commands over a paired Bluetooth SPP link
+• Setup guide on first start: permissions and a quick start for your radio
+• Info buttons that explain each settings category

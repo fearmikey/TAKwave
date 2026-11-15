@@ -28,13 +28,13 @@ class ModemLoopbackTest {
     }
 
     /** Concatenates one transmission per frame, separated by short silences. */
-    private fun transmit(frames: List<ByteArray>, amp: Double = amplitude): ShortArray {
+    private fun transmit(frames: List<ByteArray>, amp: Double = amplitude, fx25: Int = 0): ShortArray {
         val mod = AfskModulator(fs)
         val gap = ShortArray(fs / 20)
         val parts = ArrayList<ShortArray>()
         parts.add(gap)
         for (f in frames) {
-            parts.add(mod.modulate(f, txDelayMs = 150, txTailMs = 30, amplitude = amp))
+            parts.add(mod.modulate(f, txDelayMs = 150, txTailMs = 30, amplitude = amp, fx25CheckBytes = fx25))
             parts.add(gap)
         }
         val out = ShortArray(parts.sumOf { it.size })
@@ -77,9 +77,12 @@ class ModemLoopbackTest {
         }
     }
 
+    private var lastDemod: AfskDemodulator? = null
+
     private fun decode(audio: ShortArray): List<ByteArray> {
         val got = ArrayList<ByteArray>()
         val demod = AfskDemodulator(fs) { got.add(it) }
+        lastDemod = demod
         // Feed in odd-sized blocks, as a real audio callback would.
         var p = 0
         while (p < audio.size) {
@@ -141,6 +144,33 @@ class ModemLoopbackTest {
         val quietRate = decodeRate(frames, addNoise(quiet, 20.0, 9, signalAmp = 0.01))
         println("quiet (1%% of full scale): %.1f%% decoded".format(quietRate * 100))
         assertTrue("decode rate $quietRate at low level", quietRate >= 0.99)
+    }
+
+    @Test
+    fun fx25CleanLoopback() {
+        val frames = randomFrames(60, 20)
+        for (check in listOf(16, 32, 64)) {
+            assertEquals("FX.25 with $check check bytes", 1.0, decodeRate(frames, transmit(frames, fx25 = check)), 0.0)
+            // Clean frames are all caught by the plain decoder first.
+            assertEquals(0L, lastDemod!!.fecRecovered)
+        }
+    }
+
+    @Test
+    fun fx25RecoversFramesLostInNoise() {
+        val frames = randomFrames(200, 21)
+        val report = StringBuilder()
+        var repaired = 0L
+        // Full-band SNR: the in-band SNR the modem sees is far higher, so the interesting range is below 0 dB.
+        for (snr in listOf(0.0, -2.0, -4.0, -6.0)) {
+            val plain = decodeRate(frames, addNoise(transmit(frames), snr, 200 + snr.toLong()))
+            val fec = decodeRate(frames, addNoise(transmit(frames, fx25 = 32), snr, 200 + snr.toLong()))
+            repaired += lastDemod!!.fecRecovered
+            report.append("SNR %4.1f dB: plain %.1f%%, FX.25(32) %.1f%%, %d repaired%n".format(snr, plain * 100, fec * 100, lastDemod!!.fecRecovered))
+            assertTrue("FX.25 decoded fewer frames than plain AX.25 at $snr dB", fec >= plain - 0.02)
+        }
+        println(report)
+        assertTrue("FX.25 never repaired a frame", repaired > 0)
     }
 
     @Test

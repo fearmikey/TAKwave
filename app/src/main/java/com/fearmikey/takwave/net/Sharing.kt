@@ -34,6 +34,13 @@ object Sharing {
         share(context, file, "application/zip", "Send TAKwave data package to ATAK")
     }
 
+    /** Shares a team profile (its takwave:// link) as a small text file. Call from a background thread. */
+    fun shareProfile(context: Context, link: String) {
+        val file = File(exportDir(context), "takwave-profile.txt")
+        file.writeText(link + "\n")
+        share(context, file, "text/plain", "Share TAKwave team profile")
+    }
+
     /** Shares the packet log as a text file. Call from a background thread. */
     fun shareLog(context: Context, text: String) {
         val file = File(exportDir(context), "takwave-log.txt")

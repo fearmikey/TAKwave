@@ -47,7 +47,7 @@ At the end of each session, if any files, features, data flows, or package struc
 
 ### 4. RADIO SAFETY
 * PTT must always be released: in `finally` blocks, on service destroy, on USB detach, and by the TX watchdog.
-* Never transmit without a valid callsign. Never retransmit anything that arrived from RF.
+* Never transmit without a valid callsign. Never retransmit anything that arrived from RF, with one exception: store-and-forward relaying of chat, markers and emergency alerts (`core/sched/StoreForward.kt`; alerts added with the owner's approval), which is opt-in, single-hop, rate-limited and specified in `docs/PROTOCOL.md` section 9. Do not widen it (no position reports, no multi-hop, no weakening of the limits) without the owner's say-so.
 * Changes to the over-air format must follow the versioning rules in `docs/PROTOCOL.md`.
 
 ## RELEASE & PUBLISHING WORKFLOW (F-DROID)

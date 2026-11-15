@@ -1,0 +1,6 @@
+• Emergency alerts (911, Ring The Bell, In Contact) go first and repeat until cancelled
+• FX.25 error correction: always received, optional for sending
+• Store and forward for chat and markers, kept across restarts
+• Team profiles: share settings by QR code, file or text (no keys)
+• Channel health on the Status tab
+• About tab

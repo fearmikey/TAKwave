@@ -9,6 +9,18 @@
         android:name="android.hardware.microphone"
         android:required="false" />
 
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false" />
+
+    <!--
+        Bluetooth serial PTT. Only already-paired devices are used, so no scan or location
+        permission is needed. BLUETOOTH is the pre-Android 12 equivalent of BLUETOOTH_CONNECT.
+    -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- The soft modem listens to the radio through an audio input. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Only for the local TAK server socket and an optional KISS TCP link to a TNC. -->
@@ -52,6 +64,19 @@
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/usb_device_filter" />
+            <!--
+                Team profile links (takwave://profile?...), usually from a QR code scanned with the
+                camera app. The link is only shown for review; nothing is applied without the
+                operator's confirmation. See ui/TeamProfileUi.kt.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="profile"
+                    android:scheme="takwave" />
+            </intent-filter>
         </activity>
 
         <service

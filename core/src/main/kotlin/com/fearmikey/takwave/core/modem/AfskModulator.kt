@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.fearmikey.takwave.core.modem
 
+import com.fearmikey.takwave.core.ax25.Fx25
 import com.fearmikey.takwave.core.ax25.Hdlc
 import com.fearmikey.takwave.core.ax25.Nrzi
 import kotlin.math.PI
@@ -31,9 +32,20 @@ class AfskModulator(private val sampleRate: Int = Bell202.SAMPLE_RATE) {
      * @param txDelayMs duration of the flag preamble sent while the transmitter keys up
      * @param txTailMs duration of trailing flags
      * @param amplitude output level, 0.0-1.0 of full scale
+     * @param fx25CheckBytes 16, 32 or 64 to send the frame as FX.25 with that many Reed-Solomon
+     *   check bytes; 0 for plain AX.25. A frame too long for FX.25 is sent as plain AX.25.
      */
-    fun modulate(frame: ByteArray, txDelayMs: Int = 300, txTailMs: Int = 30, amplitude: Double = 0.5): ShortArray {
-        val bits = Hdlc.encodeFrame(frame, flagsFor(txDelayMs), flagsFor(txTailMs))
+    fun modulate(
+        frame: ByteArray,
+        txDelayMs: Int = 300,
+        txTailMs: Int = 30,
+        amplitude: Double = 0.5,
+        fx25CheckBytes: Int = 0,
+    ): ShortArray {
+        val pre = flagsFor(txDelayMs)
+        val tail = flagsFor(txTailMs)
+        val bits = (if (fx25CheckBytes > 0) Fx25.encodeFrame(frame, pre, tail, fx25CheckBytes) else null)
+            ?: Hdlc.encodeFrame(frame, pre, tail)
         return modulateLevels(Nrzi.encode(bits), amplitude)
     }
 

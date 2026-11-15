@@ -32,6 +32,10 @@ class KissTcpTransport(
     override val state: RfState get() = RfState.IDLE
     override val inputLevel: Float get() = 0f
 
+    @Volatile
+    override var lastAirtimeMs: Long = 0L
+        private set
+
     override fun start(listener: FrameListener) {
         running = true
         thread = Thread({ run(listener) }, "takwave-kiss").apply {
@@ -85,6 +89,8 @@ class KissTcpTransport(
                 out.write(Kiss.encode(frame))
                 out.flush()
             }
+            // The TNC's own TXDELAY is unknown; count the frame with FCS, flags and typical bit stuffing at 1200 baud.
+            lastAirtimeMs = (frame.size + 4) * 8L * 1000L * 21 / 20 / 1200
             true
         } catch (e: Exception) {
             lastError = "KISS write failed: ${e.message ?: e.javaClass.simpleName}"

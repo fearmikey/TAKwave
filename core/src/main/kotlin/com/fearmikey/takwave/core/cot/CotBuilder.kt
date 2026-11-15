@@ -2,6 +2,7 @@
 package com.fearmikey.takwave.core.cot
 
 import com.fearmikey.takwave.core.codec.ChatMessage
+import com.fearmikey.takwave.core.codec.EmergencyMessage
 import com.fearmikey.takwave.core.codec.MarkerMessage
 import com.fearmikey.takwave.core.codec.PliMessage
 import com.fearmikey.takwave.core.codec.Role
@@ -19,15 +20,23 @@ import java.util.Locale
  */
 object CotBuilder {
     const val DEFAULT_STALE_MS = 5 * 60 * 1000L
+    /** An active alert is refreshed every 30 s by its author; this keeps it on the map through a few missed copies. */
+    const val EMERGENCY_STALE_MS = 10 * 60 * 1000L
     private const val HEADER = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
     private const val RX_MARK = "<__takwave rx=\"1\"/>"
     private val TIME: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).withZone(ZoneOffset.UTC)
 
-    fun build(message: TakMessage, nowMs: Long): String = when (message) {
+    /**
+     * [originMs] is when the author first sent the message (earlier than [nowMs] for a re-sent or
+     * relayed copy). It becomes the event time; the stale time always counts from [nowMs], so a
+     * late copy is not already stale when it arrives. Position reports are never repeated.
+     */
+    fun build(message: TakMessage, nowMs: Long, originMs: Long = nowMs): String = when (message) {
         is PliMessage -> pli(message, nowMs)
-        is ChatMessage -> chat(message, nowMs)
-        is MarkerMessage -> marker(message, nowMs)
+        is ChatMessage -> chat(message, nowMs, originMs = originMs)
+        is MarkerMessage -> marker(message, nowMs, originMs)
+        is EmergencyMessage -> emergency(message, nowMs, originMs)
     }
 
     /** Stale time is three reporting intervals after now, or five minutes when the interval is unknown. */
@@ -54,12 +63,13 @@ object CotBuilder {
     /**
      * GeoChat. The uid convention `GeoChat.<senderUid>.<room>.<messageId>` and the `__chat`,
      * `chatgrp`, `link` and `remarks` details are what ATAK needs to file the message under the
-     * right conversation. [lat]/[lon] are the sender's last known position, if any.
+     * right conversation. [lat]/[lon] are the sender's last known position, if any. [originMs]
+     * (when the message was written) is the event and remarks time.
      */
-    fun chat(m: ChatMessage, nowMs: Long, lat: Double? = null, lon: Double? = null): String {
+    fun chat(m: ChatMessage, nowMs: Long, lat: Double? = null, lon: Double? = null, originMs: Long = nowMs): String {
         val sb = StringBuilder(768)
         val uid = "GeoChat.${m.senderUid}.${m.roomId}.${m.messageId}"
-        openEvent(sb, uid, CotEvent.TYPE_CHAT, "h-g-i-g-o", nowMs, nowMs + DEFAULT_STALE_MS)
+        openEvent(sb, uid, CotEvent.TYPE_CHAT, "h-g-i-g-o", originMs, nowMs + DEFAULT_STALE_MS)
         point(sb, lat ?: 0.0, lon ?: 0.0, null, null)
         sb.append("<detail>")
         sb.append("<__chat parent=\"RootContactGroup\" groupOwner=\"false\" messageId=\"").append(esc(m.messageId))
@@ -72,16 +82,16 @@ object CotBuilder {
         sb.append("<link uid=\"").append(esc(m.senderUid)).append("\" type=\"a-f-G-U-C\" relation=\"p-p\"/>")
         sb.append("<remarks source=\"BAO.F.ATAK.").append(esc(m.senderUid))
             .append("\" to=\"").append(esc(m.roomId))
-            .append("\" time=\"").append(time(nowMs)).append("\">")
+            .append("\" time=\"").append(time(originMs)).append("\">")
             .append(esc(m.text)).append("</remarks>")
         sb.append(RX_MARK).append("</detail></event>")
         return sb.toString()
     }
 
     /** Point marker. `<archive/>` keeps it on the map after the stale time passes. */
-    fun marker(m: MarkerMessage, nowMs: Long): String {
+    fun marker(m: MarkerMessage, nowMs: Long, originMs: Long = nowMs): String {
         val sb = StringBuilder(512)
-        openEvent(sb, m.uid, m.cotType, "h-g-i-g-o", nowMs, nowMs + DEFAULT_STALE_MS)
+        openEvent(sb, m.uid, m.cotType, "h-g-i-g-o", originMs, nowMs + DEFAULT_STALE_MS)
         point(sb, m.lat, m.lon, m.haeM?.toDouble(), null)
         sb.append("<detail>")
         sb.append("<contact callsign=\"").append(esc(m.name)).append("\"/>")
@@ -98,6 +108,27 @@ object CotBuilder {
         return sb.toString()
     }
 
+    /**
+     * Emergency alert or cancellation, laid out as ATAK sends them: a `b-a-*` event linked to the
+     * person in distress, with an `<emergency>` detail naming the alert type.
+     */
+    fun emergency(m: EmergencyMessage, nowMs: Long, originMs: Long = nowMs): String {
+        val sb = StringBuilder(512)
+        openEvent(sb, m.uid, m.kind.cotType, "h-e", originMs, nowMs + EMERGENCY_STALE_MS)
+        point(sb, m.lat, m.lon, m.haeM?.toDouble(), null)
+        sb.append("<detail>")
+        sb.append("<link uid=\"").append(esc(m.senderUid)).append("\" type=\"a-f-G-U-C\" relation=\"p-p\"/>")
+        sb.append("<contact callsign=\"").append(esc(m.callsign)).append("\"/>")
+        if (m.active) {
+            sb.append("<emergency type=\"").append(esc(m.kind.label)).append("\">")
+        } else {
+            sb.append("<emergency cancel=\"true\">")
+        }
+        sb.append(esc(m.text)).append("</emergency>")
+        sb.append(RX_MARK).append("</detail></event>")
+        return sb.toString()
+    }
+
     /** Reply to a client's `t-x-c-t` ping. */
     fun pong(nowMs: Long): String {
         val sb = StringBuilder(256)
@@ -107,8 +138,8 @@ object CotBuilder {
         return sb.toString()
     }
 
-    private fun openEvent(sb: StringBuilder, uid: String, type: String, how: String, nowMs: Long, staleMs: Long) {
-        val now = time(nowMs)
+    private fun openEvent(sb: StringBuilder, uid: String, type: String, how: String, timeMs: Long, staleMs: Long) {
+        val now = time(timeMs)
         sb.append(HEADER)
         sb.append("<event version=\"2.0\" uid=\"").append(esc(uid))
             .append("\" type=\"").append(esc(type))

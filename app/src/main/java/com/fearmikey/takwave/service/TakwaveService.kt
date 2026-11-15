@@ -83,7 +83,7 @@ class TakwaveService : Service() {
                 ContextCompat.RECEIVER_NOT_EXPORTED,
             )
             receiverRegistered = true
-            val e = RadioEngine(applicationContext, settings, container.status, container.log, container.keyFiles)
+            val e = RadioEngine(applicationContext, settings, container.status, container.log, container.keyFiles, container.stateFile)
             engine = e
             container.engine = e
             e.start()
@@ -161,7 +161,10 @@ class TakwaveService : Service() {
             // Minute resolution keeps the notification from being rewritten every few seconds.
             "last heard ${h.source} " + if (ageS < 60) "just now" else "${ageS / 60} min ago"
         } ?: "nothing heard yet"
-        val text = "$state · $clients · $last"
+        // ATAK raises the alarm itself; the notification just makes sure the alert is not missed here.
+        val alert = (status.ownAlerts.firstOrNull()?.let { "Sending ${it.kind.label}" }
+            ?: status.heardAlerts.firstOrNull()?.let { "EMERGENCY: ${it.message.kind.label} from ${it.message.text.ifEmpty { it.source }}" })
+        val text = listOfNotNull(alert, state, clients, last).joinToString(" · ")
         if (text == lastNotificationText) return
         lastNotificationText = text
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))

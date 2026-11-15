@@ -1,7 +1,7 @@
 {
   "project": "TAKwave",
   "applicationId": "com.fearmikey.takwave",
-  "summary": "Android app that carries TAK Cursor-on-Target traffic (PLI, GeoChat, point markers) over analog VHF/UHF radios using a software Bell 202 AFSK modem. Acts as a local TCP TAK server for ATAK; no ATAK plugin.",
+  "summary": "Android app that carries TAK Cursor-on-Target traffic (PLI, GeoChat, point markers, emergency alerts) over analog VHF/UHF radios using a software Bell 202 AFSK modem with optional FX.25 error correction. Acts as a local TCP TAK server for ATAK; no ATAK plugin.",
   "architecture": {
     "pattern": "Pure-Kotlin core library + thin Android shell. Manual constructor wiring (AppContainer), no DI framework. UI is single-activity Jetpack Compose reading StateFlows. The gateway runs in a foreground service on plain threads.",
     "rules": [
@@ -9,7 +9,8 @@
       ":app holds everything Android",
       ":usbserial is vendored third-party source; do not edit",
       "Over-air format changes must follow docs/PROTOCOL.md versioning rules",
-      "PTT must be released in finally blocks, on service destroy, on USB detach and by the TX watchdog"
+      "RF traffic is never retransmitted except by store-and-forward relaying of chat, markers and emergency alerts (opt-in, single hop, rate-limited; docs/PROTOCOL.md section 9)",
+      "PTT must be released in finally blocks, on service destroy, on USB detach and by the TX watchdog; when the Bluetooth PTT link drops, transmitting is disabled and audio aborted"
     ]
   },
   "modules": {
@@ -19,33 +20,41 @@
       "tests": "core/src/test/kotlin/com/fearmikey/takwave/core (run: ./gradlew :core:test)",
       "packages": {
         "ax25": {
-          "responsibility": "AX.25 addresses and UI frames, CRC-16-CCITT FCS, HDLC flags/bit stuffing, NRZI",
-          "files": ["ax25/Ax25.kt", "ax25/Crc16.kt", "ax25/Hdlc.kt"]
+          "responsibility": "AX.25 addresses and UI frames, CRC-16-CCITT FCS, HDLC flags/bit stuffing, NRZI, FX.25 framing (correlation tags, encoder, bit-level receiver) and the Reed-Solomon codec (GF(2^8) 0x11D, fcr 1; Dire Wolf compatible)",
+          "files": ["ax25/Ax25.kt", "ax25/Crc16.kt", "ax25/Hdlc.kt", "ax25/Fx25.kt", "ax25/ReedSolomon.kt"]
         },
         "modem": {
-          "responsibility": "Bell 202 AFSK 1200 baud at 48 kHz: modulator, multi-slicer demodulator with PLL, DCD, level meter, FIR design",
+          "responsibility": "Bell 202 AFSK 1200 baud at 48 kHz: modulator (plain or FX.25), multi-slicer demodulator with PLL, an HDLC deframer and an FX.25 receiver per slicer, CRC de-duplication, fecRecovered counter, DCD, level meter, FIR design",
           "files": ["modem/AfskModulator.kt", "modem/AfskDemodulator.kt", "modem/Fir.kt"]
         },
         "codec": {
-          "responsibility": "Over-air binary payload (PLI/Chat/Marker), field encodings and caps, payload encryption suites and key loading",
+          "responsibility": "Over-air binary payload (PLI/Chat/Marker/Emergency), field encodings and caps, the extension byte (hop count, age, PLI report counter), payload encryption suites and key loading",
           "files": ["codec/Messages.kt", "codec/PacketCodec.kt", "codec/PayloadCrypto.kt"],
           "notes": "PayloadCrypto.kt holds PayloadCipher, AeadCipher (suites 0/1), EciesCipher (suites 2/3), KeyLoader (passphrase, key files, PEM, ECDH, HKDF)"
         },
         "cot": {
-          "responsibility": "CoT XML: hardened parsing, stream splitting on </event>, classification of client events, rebuilding XML for RF traffic",
+          "responsibility": "CoT XML: hardened parsing (including the <emergency> detail), stream splitting on </event>, classification of client events (b-a-* alerts become EmergencyMessage), rebuilding XML for RF traffic",
           "files": ["cot/CotEvent.kt", "cot/CotParser.kt", "cot/CotStreamSplitter.kt", "cot/CotMapper.kt", "cot/CotBuilder.kt"]
         },
         "sched": {
-          "responsibility": "Injected clock, PLI scheduler, priority TX queue, loop guard, p-persistent CSMA, time-slot schedule and channel access, geo helpers",
-          "files": ["sched/Scheduling.kt", "sched/SlotSchedule.kt"]
+          "responsibility": "Injected clock, PLI scheduler, priority TX queue (alerts > chat > markers > PLI), loop guard, p-persistent CSMA, time-slot schedule and channel access, geo helpers, store and forward (RepeatConfig limits, RepeatStore, SeenCache, and their binary save/restore via HeldMessageIo), EmergencyBeacon (repeats own active alerts every 30 s, cancel 3 times)",
+          "files": ["sched/Scheduling.kt", "sched/SlotSchedule.kt", "sched/StoreForward.kt", "sched/EmergencyBeacon.kt"]
+        },
+        "stats": {
+          "responsibility": "Rolling 10-minute channel statistics in 10 s buckets: channel busy, own air time, RX/TX event counts (ChannelEvent), snapshot as ChannelHealth",
+          "files": ["stats/ChannelStats.kt"]
+        },
+        "profile": {
+          "responsibility": "TeamProfile: the team-wide settings as a takwave://profile?... link (also file and QR content); strict validation, slot assignment table, never key material",
+          "files": ["profile/TeamProfile.kt"]
         },
         "gateway": {
-          "responsibility": "I/O-free heart of the app: client CoT -> queue -> AX.25 frames, and RF frames -> CoT; heard-station table",
+          "responsibility": "I/O-free heart of the app: client CoT -> queue -> AX.25 frames, and RF frames -> CoT; heard-station table with PLI loss from report-counter gaps; heard alerts and own alerts; RxKind on every RF outcome for statistics; feeds RepeatStore and emits re-sent/relayed frames (TxKind) when the queue is empty; saveState/restoreState for store-and-forward persistence",
           "files": ["gateway/Gateway.kt"]
         },
         "io": {
-          "responsibility": "Boundary interfaces (AudioSink, AudioSource, Ptt, FrameTransport) and the two transports",
-          "files": ["io/Transport.kt", "io/SoftModemTransport.kt", "io/KissTcpTransport.kt"]
+          "responsibility": "Boundary interfaces (AudioSink, AudioSource, Ptt, FrameTransport with lastAirtimeMs), the two transports (soft modem with optional FX.25 transmit), and the parser for operator-typed PTT command strings",
+          "files": ["io/Transport.kt", "io/SoftModemTransport.kt", "io/KissTcpTransport.kt", "io/PttCommand.kt"]
         },
         "kiss": {
           "responsibility": "KISS TNC framing",
@@ -62,15 +71,15 @@
       "root": "app/src/main/java/com/fearmikey/takwave",
       "packages": {
         "(root)": {
-          "responsibility": "Application class, manual wiring, single activity with tab navigation",
+          "responsibility": "Application class, manual wiring (AppContainer also holds StateFile and pendingProfile), single activity: shows the setup guide until Settings.onboardingDone, then tab navigation; accepts takwave://profile links (onCreate/onNewIntent) and shows ProfileImportDialog for any pending profile",
           "files": ["TakwaveApp.kt", "MainActivity.kt"]
         },
         "data": {
-          "responsibility": "Settings model and DataStore persistence; imported key files and cipher construction",
-          "files": ["data/Settings.kt", "data/KeyFiles.kt"]
+          "responsibility": "Settings model (including Fx25Mode) and DataStore persistence; imported key files and cipher construction; Settings <-> TeamProfile mapping and change list; store-and-forward state file (AtomicFile in noBackupFilesDir)",
+          "files": ["data/Settings.kt", "data/KeyFiles.kt", "data/TeamProfiles.kt", "data/StateFile.kt"]
         },
         "engine": {
-          "responsibility": "RadioEngine wires CotServer + Gateway + transport and owns the tx/status threads; RadioStatus and PacketLog state holders",
+          "responsibility": "RadioEngine wires CotServer + Gateway + transport and owns the tx/status threads, feeds ChannelStats, restores and saves store-and-forward state; RadioStatus (alerts, channel health) and PacketLog state holders",
           "files": ["engine/RadioEngine.kt", "engine/State.kt"]
         },
         "service": {
@@ -78,7 +87,7 @@
           "files": ["service/TakwaveService.kt"]
         },
         "net": {
-          "responsibility": "Local TCP CoT server; share-sheet export of the data package and log",
+          "responsibility": "Local TCP CoT server; share-sheet export of the data package, team profile and log",
           "files": ["net/CotServer.kt", "net/Sharing.kt"]
         },
         "audio": {
@@ -86,12 +95,13 @@
           "files": ["audio/AndroidAudio.kt"]
         },
         "ptt": {
-          "responsibility": "Serial RTS/DTR PTT through usb-serial-for-android, USB permission requests",
-          "files": ["ptt/SerialPtt.kt"]
+          "responsibility": "Serial RTS/DTR PTT through usb-serial-for-android, USB permission requests; Bluetooth serial (SPP) PTT that writes key/unkey commands to a paired device",
+          "files": ["ptt/SerialPtt.kt", "ptt/BluetoothPtt.kt"]
         },
         "ui": {
           "responsibility": "Compose screens and shared widgets",
-          "files": ["ui/Theme.kt", "ui/StatusScreen.kt", "ui/SettingsScreen.kt", "ui/LogScreen.kt", "ui/CalibrateScreen.kt"]
+          "files": ["ui/Theme.kt", "ui/StatusScreen.kt", "ui/SettingsScreen.kt", "ui/LogScreen.kt", "ui/CalibrateScreen.kt", "ui/AboutScreen.kt", "ui/OnboardingScreen.kt", "ui/HelpText.kt", "ui/Scrollbar.kt", "ui/TeamProfileUi.kt"],
+          "notes": "Theme.kt holds Section (optional info button) and InfoButton. Scrollbar.kt provides Modifier.verticalScrollbar(ScrollState | LazyListState); every scrolling surface uses it, placed before verticalScroll. SettingsScreen.kt exposes the setting widgets and AudioDeviceSettings / SerialPttSettings / BluetoothPttSettings as internal composables reused by OnboardingScreen.kt. HelpText.kt holds every info-dialog text. StatusScreen.kt shows alert cards, the Channel health section and PLI reception per heard station. TeamProfileUi.kt holds TeamProfileSection (Settings), the share dialog with a ZXing-drawn QR code, and ProfileImportDialog. AboutScreen.kt shows the version (from PackageManager; buildConfig is off), developer, and links (repository, issues, Buy Me a Coffee) opened with ACTION_VIEW only on tap; the URLs are constants at the top of the file. Tabs (MainActivity TABS): Status, Settings, Log, Calibrate, About, in a PrimaryScrollableTabRow."
         }
       },
       "resources": {
@@ -130,13 +140,33 @@
       "cot/CotBuilder (adds <__takwave rx=\"1\"/>) -> net/CotServer.sendToAll -> every TAK client"
     ],
     "clientRelay": "CotServer -> RadioEngine.onClientEvent -> CotServer.sendToAll(except sender) for every valid non-ping event",
+    "storeAndForward": [
+      "Own traffic: Gateway.pollFrame sends a queued chat/marker -> RepeatStore.onOwnSent (records stations in range)",
+      "RF: Gateway.onRfFrame -> codec extension (DecodeResult.Ok.hops, ageS) -> originMs = now - age -> SeenCache.accept (NEW / REPEAT / OUTDATED marker version; only NEW is delivered) -> CotBuilder uses originMs for event time and chat remarks time, stale from now -> RepeatStore.onRf (cancels pending repeat; relay stations hold messages heard from their author) -> RepeatStore.onStationHeard (schedules repeats for stations not covered; direct chats only for the recipient via uidSource)",
+      "Gateway.pollFrame, queue empty -> RepeatStore.nextDue (hold time, repeats per message, min gap, 10-minute budget) -> PacketCodec.encode(message, hops = 1 for relays, ageS = now - originMs) -> TxItem.kind RESEND/RELAY",
+      "Settings resendOwn, relay, repeatHoldMin, repeatMax, repeatGapS, repeatBudget -> RadioEngine -> RepeatConfig; Settings tab section 'Store and forward'"
+    ],
+    "emergency": [
+      "TAK client b-a-* event -> cot/CotMapper.emergency -> EmergencyMessage -> Gateway.offer -> sched/EmergencyBeacon.update (and SeenCache)",
+      "Gateway.pollFrame: EmergencyBeacon.due (now, then every 30 s while active; cancel 3 times) -> TxQueue (highest priority) -> codec type 4",
+      "RF: Gateway.onRfFrame -> SeenCache (a cancel is a newer version; old alerts OUTDATED) -> rfAlerts (heardAlerts) -> CotBuilder.emergency (stale 10 min); author's repeats of an active alert are delivered every time",
+      "Relay stations: RepeatStore holds and relays alerts like chat (ranked first); own alerts are never in RepeatStore",
+      "RadioEngine.publish -> RadioStatus.ownAlerts / heardAlerts -> StatusScreen alert cards and the service notification"
+    ],
+    "fx25": "Settings.fx25 -> ModemConfig.fx25CheckBytes -> AfskModulator.modulate -> ax25/Fx25.encodeFrame (falls back to plain HDLC when too long). Receive: every AfskDemodulator slicer feeds bits to HdlcDeframer and Fx25Receiver -> ReedSolomon.decode -> HdlcDeframer on the corrected data -> deliver (CRC de-dup; fecRecovered counts frames only FX.25 got)",
+    "channelHealth": "RadioEngine: status thread samples SoftModemTransport.state into stats/ChannelStats (busy/idle, not TX) and adds deltas of fecRecovered and Gateway.queueDropped; onRfFrame counts RfOutcome.kind; transmitLoop records lastAirtimeMs or TX_FAILED -> ChannelStats.snapshot -> RadioStatus.health -> StatusScreen. PLI loss: Gateway encodes a station-wide report counter (extension bit 5) on PLIs; receivers count gaps per source into HeardStation.pliReceived/pliMissed",
+    "teamProfile": "Share: ui/TeamProfileUi ProfileShareDialog -> data/TeamProfiles Settings.toTeamProfile -> core profile/TeamProfile.toUri -> QR (ZXing) / net/Sharing.shareProfile / clipboard. Load: takwave://profile link (MainActivity intent filter), file (OpenDocument, 2 KB cap) or clipboard -> AppContainer.pendingProfile -> ProfileImportDialog: TeamProfile.parse + Settings.withTeamProfile + profileChanges -> Apply -> SettingsStore.update",
+    "storeForwardPersistence": "RadioEngine.startBlocking: data/StateFile.read -> Gateway.restoreState (parse fully, then apply; drops held messages if encryption was switched on/off) ; status thread every 30 s and releaseAll on stop: Gateway.saveState -> StateFile.write when changed",
     "settings": "ui/SettingsScreen -> data/SettingsStore (DataStore) ; read once by service/TakwaveService when it builds RadioEngine",
+    "onboarding": "MainActivity shows ui/OnboardingScreen while Settings.onboardingDone is false: welcome -> permissions -> quick-start offer -> callsign -> radio setup (USB interface / VOX cable / Bluetooth serial PTT / KISS TNC / acoustic) -> setup-specific steps -> done. Values are written straight to SettingsStore; Skip or Finish sets onboardingDone; Settings > 'Run the setup guide again' clears it",
+    "bluetoothPtt": "Settings (btPttDevice, btPttPreset, btKeyCommand, btUnkeyCommand) -> RadioEngine.buildSoftModem -> core io/PttCommand.parse -> ptt/BluetoothPtt.open (RFCOMM SPP to a paired device, sends unkey first) -> used as Ptt by SoftModemTransport ; link loss -> RadioEngine.onBluetoothPttLost (pttLost, audio abort, warning)",
     "keys": "ui/SettingsScreen file picker -> data/KeyFiles.import (validates via core codec/KeyLoader) -> files/keys/* ; KeyFiles.buildCipher at gateway start",
     "status": "RadioEngine.publish (10 Hz) -> AppContainer.status StateFlow -> Compose screens and the service notification",
     "dataPackage": "ui/StatusScreen -> net/Sharing.shareDataPackage -> core datapackage/DataPackage.build -> FileProvider -> share sheet -> ATAK"
   },
   "build": {
     "catalog": "gradle/libs.versions.toml",
+    "thirdParty": "com.google.zxing:core (Apache-2.0) in :app for QR generation only",
     "fossGuard": "app/build.gradle.kts task checkFossDependencies (runs before preBuild)",
     "storeIcon": "root build.gradle.kts task generateFastlaneIcon",
     "release": "see AGENTS.md 'Release & publishing workflow'"

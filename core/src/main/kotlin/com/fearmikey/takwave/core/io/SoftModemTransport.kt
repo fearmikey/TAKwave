@@ -27,6 +27,8 @@ data class ModemConfig(
     val maxChannelWaitMs: Long = 30_000,
     /** Time-slotted transmit; null for plain CSMA. */
     val slots: SlotConfig? = null,
+    /** Send frames as FX.25 with this many check bytes (16, 32 or 64); 0 sends plain AX.25. FX.25 is always received. */
+    val fx25CheckBytes: Int = 0,
 )
 
 /**
@@ -79,6 +81,13 @@ class SoftModemTransport(
 
     val inputPeak: Float get() = demodulator.peakLevel
 
+    /** Frames received only because FX.25 repaired them, since the transport started. */
+    val fecRecovered: Long get() = demodulator.fecRecovered
+
+    @Volatile
+    override var lastAirtimeMs: Long = 0L
+        private set
+
     private fun channelBusy(): Boolean =
         demodulator.dcd || (config.energyThreshold > 0f && demodulator.rmsLevel > config.energyThreshold)
 
@@ -111,7 +120,7 @@ class SoftModemTransport(
     }
 
     override fun send(frame: ByteArray): Boolean {
-        val audio = modulator.modulate(frame, config.txDelayMs, config.txTailMs, config.amplitude)
+        val audio = modulator.modulate(frame, config.txDelayMs, config.txTailMs, config.amplitude, config.fx25CheckBytes)
         return transmit(audio, useCsma = true)
     }
 
@@ -164,6 +173,7 @@ class SoftModemTransport(
                 lastError = "TX timeout: transmitter force-unkeyed after ${config.txTimeoutMs} ms"
                 return false
             }
+            lastAirtimeMs = durationMs
             return true
         }
     }

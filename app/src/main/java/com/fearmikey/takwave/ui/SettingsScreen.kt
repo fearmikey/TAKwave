@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.fearmikey.takwave.ui
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.hardware.usb.UsbManager
+import android.os.Build
+import androidx.compose.runtime.MutableIntState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import com.fearmikey.takwave.core.io.PttCommand
+import com.fearmikey.takwave.data.BtPttPreset
+import com.fearmikey.takwave.ptt.BluetoothDevices
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +56,7 @@ import com.fearmikey.takwave.audio.AudioDevices
 import com.fearmikey.takwave.core.ax25.Ax25Address
 import com.fearmikey.takwave.data.CipherChoice
 import com.fearmikey.takwave.data.EncryptionMode
+import com.fearmikey.takwave.data.Fx25Mode
 import com.fearmikey.takwave.data.KeySlot
 import com.fearmikey.takwave.data.TimeSource
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -75,27 +84,14 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
         scope.launch { container.settingsStore.update(transform) }
     }
 
-    // Bumped whenever USB devices come, go, or get permission, to re-read the device lists.
-    var deviceTick by remember { mutableIntStateOf(0) }
-    DisposableEffect(Unit) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) {
-                deviceTick++
-            }
-        }
-        val filter = IntentFilter().apply {
-            addAction(SerialDevices.ACTION_USB_PERMISSION)
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        }
-        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        onDispose { context.unregisterReceiver(receiver) }
-    }
+    val deviceTick = rememberDeviceTick()
 
+    val scroll = rememberScrollState()
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScrollbar(scroll)
+            .verticalScroll(scroll)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         if (status.running) {
@@ -113,7 +109,7 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
             }
         }
 
-        Section("Station") {
+        Section("Station", info = HelpText.CALLSIGN) {
             TextSetting(
                 label = "Callsign (required)",
                 value = settings.callsign,
@@ -133,7 +129,7 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
             )
         }
 
-        Section("TAK server") {
+        Section("TAK server", info = HelpText.TAK_SERVER) {
             IntSetting("TCP port", settings.takPort, 1024..65535) { v -> update { it.copy(takPort = v) } }
             SwitchSetting(
                 "Allow LAN clients",
@@ -143,14 +139,41 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
             ) { v -> update { it.copy(allowLan = v) } }
         }
 
-        Section("Position reports (PLI)") {
+        Section("Position reports (PLI)", info = HelpText.PLI) {
             IntSetting("Base interval (s)", settings.pliBaseS, 10..3600) { v -> update { it.copy(pliBaseS = v) } }
             IntSetting("Minimum interval (s)", settings.pliMinS, 5..600) { v -> update { it.copy(pliMinS = v) } }
             IntSetting("Send early after moving (m)", settings.pliDistanceM, 5..10000) { v -> update { it.copy(pliDistanceM = v) } }
             IntSetting("Send early after turning (degrees)", settings.pliHeadingDeg, 5..180) { v -> update { it.copy(pliHeadingDeg = v) } }
         }
 
-        Section("Modem backend") {
+        Section("Store and forward", info = HelpText.STORE_FORWARD) {
+            SwitchSetting(
+                "Send my messages again",
+                "When a station comes into range that missed one of your chat messages or markers, send it once more.",
+                settings.resendOwn,
+            ) { v -> update { it.copy(resendOwn = v) } }
+            SwitchSetting(
+                "Relay for other stations",
+                "Pass on chat, markers and emergency alerts heard from other stations, under your callsign. Use on " +
+                    "one well-placed station only.",
+                settings.relay,
+            ) { v -> update { it.copy(relay = v) } }
+            if (settings.resendOwn || settings.relay) {
+                Spacer(Modifier.height(8.dp))
+                Text("Limits", style = MaterialTheme.typography.labelLarge)
+                IntSetting("Keep messages for (minutes)", settings.repeatHoldMin, 5..240) { v -> update { it.copy(repeatHoldMin = v) } }
+                IntSetting("Repeats per message", settings.repeatMax, 1..10) { v -> update { it.copy(repeatMax = v) } }
+                IntSetting("Minimum gap between repeats (s)", settings.repeatGapS, 30..1800) { v -> update { it.copy(repeatGapS = v) } }
+                IntSetting("Most repeats per 10 minutes", settings.repeatBudget, 1..30) { v -> update { it.copy(repeatBudget = v) } }
+                Text(
+                    "New traffic always goes first; repeats only use air time that is otherwise idle. At most " +
+                        "%d repeats in 10 minutes is at most about %d s of air time.".format(settings.repeatBudget, settings.repeatBudget * 2),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        Section("Modem backend", info = HelpText.BACKEND) {
             ChoiceSetting(ModemBackend.entries.map { it to it.label }, settings.backend) { v -> update { it.copy(backend = v) } }
             if (settings.backend == ModemBackend.KISS_TCP) {
                 TextSetting(
@@ -170,54 +193,20 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
         }
 
         if (settings.backend == ModemBackend.SOFT) {
-            Section("Audio devices") {
-                val inputs = remember(deviceTick) { AudioDevices.inputs(context) }
-                val outputs = remember(deviceTick) { AudioDevices.outputs(context) }
-                Text("Input (from radio)", style = MaterialTheme.typography.labelLarge)
-                ChoiceSetting(audioChoices(inputs, settings.inputDevice), settings.inputDevice) { v -> update { it.copy(inputDevice = v) } }
-                Spacer(Modifier.height(8.dp))
-                Text("Output (to radio)", style = MaterialTheme.typography.labelLarge)
-                ChoiceSetting(audioChoices(outputs, settings.outputDevice), settings.outputDevice) { v -> update { it.copy(outputDevice = v) } }
-                OutlinedButton(onClick = { deviceTick++ }) { Text("Refresh device list") }
-                Text(
-                    "A Digirig shows up as USB audio. With the system default and no interface attached, TAKwave uses the " +
-                        "built-in microphone and speaker: acoustic test mode.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+            Section("Audio devices", info = HelpText.AUDIO) {
+                AudioDeviceSettings(settings, deviceTick) { update(it) }
             }
 
-            Section("PTT") {
+            Section("PTT", info = HelpText.PTT) {
                 ChoiceSetting(PttMethod.entries.map { it to it.label }, settings.pttMethod) { v -> update { it.copy(pttMethod = v) } }
                 when (settings.pttMethod) {
                     PttMethod.SERIAL -> {
-                        val devices = remember(deviceTick) { SerialDevices.list(context) }
                         Spacer(Modifier.height(8.dp))
-                        Text("USB serial adapter", style = MaterialTheme.typography.labelLarge)
-                        val choices = buildList {
-                            add("" to "First adapter found")
-                            devices.forEach { add(it.key to it.label + if (it.hasPermission) "" else " (permission needed)") }
-                            if (settings.pttDevice.isNotEmpty() && devices.none { it.key == settings.pttDevice }) {
-                                add(settings.pttDevice to "${settings.pttDevice} (not connected)")
-                            }
-                        }
-                        ChoiceSetting(choices, settings.pttDevice) { v -> update { it.copy(pttDevice = v) } }
-                        if (devices.isEmpty()) {
-                            Text("No USB serial adapter detected.", style = MaterialTheme.typography.bodySmall, color = WarnAmber)
-                        }
-                        devices.filter { !it.hasPermission }.forEach { d ->
-                            OutlinedButton(onClick = { SerialDevices.requestPermission(context, d.device) }) {
-                                Text("Grant access to ${d.label}")
-                            }
-                        }
+                        SerialPttSettings(settings, deviceTick.intValue) { update(it) }
+                    }
+                    PttMethod.BLUETOOTH -> {
                         Spacer(Modifier.height(8.dp))
-                        Text("Control line", style = MaterialTheme.typography.labelLarge)
-                        ChoiceSetting(PttLine.entries.map { it to it.name }, settings.pttLine) { v -> update { it.copy(pttLine = v) } }
-                        SwitchSetting(
-                            "Invert polarity",
-                            "Off: the line goes high to transmit (Digirig). On: the line goes low to transmit.",
-                            settings.pttInverted,
-                        ) { v -> update { it.copy(pttInverted = v) } }
+                        BluetoothPttSettings(settings) { update(it) }
                     }
                     PttMethod.VOX -> Text(
                         "The radio keys itself from the audio (or you are testing acoustically). Raise TXDELAY if the " +
@@ -231,7 +220,7 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 }
             }
 
-            Section("Transmit") {
+            Section("Transmit", info = HelpText.TRANSMIT) {
                 IntSetting("TXDELAY (ms)", settings.txDelayMs, 50..2000) { v -> update { it.copy(txDelayMs = v) } }
                 IntSetting("TXTAIL (ms)", settings.txTailMs, 10..500) { v -> update { it.copy(txTailMs = v) } }
                 IntSetting("TX audio level (%)", settings.txLevel, 1..100) { v -> update { it.copy(txLevel = v) } }
@@ -242,7 +231,16 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 )
             }
 
-            Section("Channel access (CSMA)") {
+            Section("Error correction (FX.25)", info = HelpText.FX25) {
+                ChoiceSetting(Fx25Mode.entries.map { it to it.label }, settings.fx25) { v -> update { it.copy(fx25 = v) } }
+                Text(
+                    "FX.25 packets are always received and repaired. This only decides whether your own packets carry " +
+                        "the extra check bytes, at the cost of longer transmissions. Stations without FX.25 still read them.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Section("Channel access (CSMA)", info = HelpText.CSMA) {
                 IntSetting("Slot time (ms)", settings.slotTimeMs, 10..1000) { v -> update { it.copy(slotTimeMs = v) } }
                 IntSetting("Persistence (0-255)", settings.persistence, 0..255) { v -> update { it.copy(persistence = v) } }
                 IntSetting("Busy above input level (%, 0 = off)", settings.energyThreshold, 0..100) { v -> update { it.copy(energyThreshold = v) } }
@@ -253,7 +251,7 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 )
             }
 
-            Section("Time slots") {
+            Section("Time slots", info = HelpText.SLOTS) {
                 SwitchSetting(
                     "Transmit only in my time slot",
                     "Stations take turns: each one transmits only during its own slot of a repeating cycle, so two " +
@@ -286,7 +284,7 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
             }
         }
 
-        Section("Encryption") {
+        Section("Encryption", info = HelpText.ENCRYPTION) {
             WarningCard(
                 "Encryption is NOT permitted on amateur radio frequencies. Leave this Off unless you are operating " +
                     "under a Part 90 (business band) licence that allows it.",
@@ -294,8 +292,171 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
             ChoiceSetting(EncryptionMode.entries.map { it to it.label }, settings.encryption) { v -> update { it.copy(encryption = v) } }
             EncryptionDetails(container, settings) { transform -> update(transform) }
         }
+
+        TeamProfileSection(container, settings)
+
+        Section("Setup guide") {
+            Text(
+                "Walks through permissions and the settings your radio needs, one step at a time.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { update { it.copy(onboardingDone = false) } }) { Text("Run the setup guide again") }
+        }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/**
+ * A counter that is bumped whenever USB devices come, go, or get permission, so device lists
+ * are re-read. Callers may also bump it themselves ("Refresh").
+ */
+@Composable
+internal fun rememberDeviceTick(): MutableIntState {
+    val context = LocalContext.current
+    val tick = remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, i: Intent) {
+                tick.intValue++
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(SerialDevices.ACTION_USB_PERMISSION)
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    return tick
+}
+
+/** Input and output device pickers. Shared by Settings and the setup guide. */
+@Composable
+internal fun AudioDeviceSettings(settings: Settings, deviceTick: MutableIntState, update: ((Settings) -> Settings) -> Unit) {
+    val context = LocalContext.current
+    val inputs = remember(deviceTick.intValue) { AudioDevices.inputs(context) }
+    val outputs = remember(deviceTick.intValue) { AudioDevices.outputs(context) }
+    Text("Input (from radio)", style = MaterialTheme.typography.labelLarge)
+    ChoiceSetting(audioChoices(inputs, settings.inputDevice), settings.inputDevice) { v -> update { it.copy(inputDevice = v) } }
+    Spacer(Modifier.height(8.dp))
+    Text("Output (to radio)", style = MaterialTheme.typography.labelLarge)
+    ChoiceSetting(audioChoices(outputs, settings.outputDevice), settings.outputDevice) { v -> update { it.copy(outputDevice = v) } }
+    OutlinedButton(onClick = { deviceTick.intValue++ }) { Text("Refresh device list") }
+    Text(
+        "A Digirig shows up as USB audio. With the system default and no interface attached, TAKwave uses the " +
+            "built-in microphone and speaker: acoustic test mode.",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** USB serial adapter, control line and polarity. Shared by Settings and the setup guide. */
+@Composable
+internal fun SerialPttSettings(settings: Settings, deviceTick: Int, update: ((Settings) -> Settings) -> Unit) {
+    val context = LocalContext.current
+    val devices = remember(deviceTick) { SerialDevices.list(context) }
+    Text("USB serial adapter", style = MaterialTheme.typography.labelLarge)
+    val choices = buildList {
+        add("" to "First adapter found")
+        devices.forEach { add(it.key to it.label + if (it.hasPermission) "" else " (permission needed)") }
+        if (settings.pttDevice.isNotEmpty() && devices.none { it.key == settings.pttDevice }) {
+            add(settings.pttDevice to "${settings.pttDevice} (not connected)")
+        }
+    }
+    ChoiceSetting(choices, settings.pttDevice) { v -> update { it.copy(pttDevice = v) } }
+    if (devices.isEmpty()) {
+        Text("No USB serial adapter detected.", style = MaterialTheme.typography.bodySmall, color = WarnAmber)
+    }
+    devices.filter { !it.hasPermission }.forEach { d ->
+        OutlinedButton(onClick = { SerialDevices.requestPermission(context, d.device) }) {
+            Text("Grant access to ${d.label}")
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text("Control line", style = MaterialTheme.typography.labelLarge)
+    ChoiceSetting(PttLine.entries.map { it to it.name }, settings.pttLine) { v -> update { it.copy(pttLine = v) } }
+    SwitchSetting(
+        "Invert polarity",
+        "Off: the line goes high to transmit (Digirig). On: the line goes low to transmit.",
+        settings.pttInverted,
+    ) { v -> update { it.copy(pttInverted = v) } }
+}
+
+/** Paired device and key/unkey commands for Bluetooth serial PTT. Shared by Settings and the setup guide. */
+@Composable
+internal fun BluetoothPttSettings(settings: Settings, update: ((Settings) -> Settings) -> Unit) {
+    val context = LocalContext.current
+    // Re-read the paired devices after a permission prompt or a trip to the system settings.
+    var tick by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
+    val allowed = remember(tick) { BluetoothDevices.hasPermission(context) }
+    val devices = remember(tick) { BluetoothDevices.paired(context) }
+
+    Text("Paired Bluetooth device", style = MaterialTheme.typography.labelLarge)
+    if (!allowed) {
+        Text(
+            "TAKwave needs the Nearby devices permission to use a paired Bluetooth device.",
+            style = MaterialTheme.typography.bodySmall,
+            color = WarnAmber,
+        )
+        OutlinedButton(onClick = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) permission.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        }) { Text("Allow Bluetooth access") }
+    } else {
+        val choices = buildList {
+            devices.forEach { add(it.address to it.label) }
+            if (settings.btPttDevice.isNotEmpty() && devices.none { it.address == settings.btPttDevice }) {
+                add(settings.btPttDevice to "${settings.btPttDevice} (not paired)")
+            }
+        }
+        ChoiceSetting(choices, settings.btPttDevice) { v -> update { it.copy(btPttDevice = v) } }
+        if (devices.isEmpty()) {
+            Text(
+                "No paired devices, or Bluetooth is off. Pair the radio or adapter in Android's Bluetooth settings first.",
+                style = MaterialTheme.typography.bodySmall,
+                color = WarnAmber,
+            )
+        } else if (settings.btPttDevice.isEmpty()) {
+            Text("Choose the device that keys your radio.", style = MaterialTheme.typography.bodySmall, color = WarnAmber)
+        }
+    }
+    OutlinedButton(onClick = {
+        try {
+            context.startActivity(Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS))
+        } catch (e: Exception) {
+            // No Bluetooth settings screen on this device.
+        }
+    }) { Text("Open Bluetooth settings") }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Commands", style = MaterialTheme.typography.labelLarge)
+    ChoiceSetting(BtPttPreset.entries.map { it to it.label }, settings.btPttPreset) { v -> update { it.copy(btPttPreset = v) } }
+    if (settings.btPttPreset == BtPttPreset.CUSTOM) {
+        TextSetting(
+            label = "Command to transmit",
+            value = settings.btKeyCommand,
+            error = PttCommand.errorOf(settings.btKeyCommand),
+            onChange = { v -> update { it.copy(btKeyCommand = v) } },
+            filter = { it.take(4 * PttCommand.MAX_BYTES) },
+        )
+        TextSetting(
+            label = "Command to stop transmitting",
+            value = settings.btUnkeyCommand,
+            error = PttCommand.errorOf(settings.btUnkeyCommand),
+            onChange = { v -> update { it.copy(btUnkeyCommand = v) } },
+            filter = { it.take(4 * PttCommand.MAX_BYTES) },
+        )
+        Text("Write special bytes as \\r, \\n or \\xHH.", style = MaterialTheme.typography.bodySmall)
+    }
+    Text(
+        "Only PTT goes over Bluetooth; audio still uses the devices chosen above. If the Bluetooth link drops while " +
+            "transmitting, the stop command cannot reach the radio, so set a short time-out timer (TOT) on the radio.",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 /** Mode-specific controls: passphrase entry, cipher choice and the key slots that the mode uses. */
@@ -419,7 +580,7 @@ private fun audioChoices(options: List<AudioDeviceOption>, selected: String): Li
 }
 
 @Composable
-private fun TextSetting(
+internal fun TextSetting(
     label: String,
     value: String,
     onChange: (String) -> Unit,
@@ -451,7 +612,7 @@ private fun TextSetting(
 }
 
 @Composable
-private fun IntSetting(label: String, value: Int, range: IntRange, onChange: (Int) -> Unit) {
+internal fun IntSetting(label: String, value: Int, range: IntRange, onChange: (Int) -> Unit) {
     var text by remember { mutableStateOf(value.toString()) }
     val parsed = text.toIntOrNull()
     val valid = parsed != null && parsed in range
@@ -473,7 +634,7 @@ private fun IntSetting(label: String, value: Int, range: IntRange, onChange: (In
 }
 
 @Composable
-private fun SwitchSetting(label: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+internal fun SwitchSetting(label: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(label, style = MaterialTheme.typography.bodyLarge)
@@ -484,7 +645,7 @@ private fun SwitchSetting(label: String, description: String, checked: Boolean, 
 }
 
 @Composable
-private fun <T> ChoiceSetting(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
+internal fun <T> ChoiceSetting(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
     Column {
         for ((value, label) in options) {
             Row(

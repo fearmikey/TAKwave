@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import com.fearmikey.takwave.data.KeyFiles
 import com.fearmikey.takwave.data.SettingsStore
+import com.fearmikey.takwave.data.StateFile
 import com.fearmikey.takwave.engine.PacketLog
 import com.fearmikey.takwave.engine.RadioEngine
 import com.fearmikey.takwave.engine.RadioStatus
@@ -19,6 +20,13 @@ class AppContainer(context: Context) {
     val keyFiles = KeyFiles(context)
     val status = MutableStateFlow(RadioStatus())
     val log = PacketLog()
+    val stateFile = StateFile(context)
+
+    /**
+     * Text of a team profile waiting for the operator to review (from a takwave:// link, a file or
+     * the clipboard). It is only applied after they confirm it in the dialog.
+     */
+    val pendingProfile = MutableStateFlow<String?>(null)
 
     /** The engine owned by the running service, or null when the service is stopped. */
     @Volatile

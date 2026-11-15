@@ -2,6 +2,7 @@
 package com.fearmikey.takwave.core.modem
 
 import com.fearmikey.takwave.core.ax25.Crc16
+import com.fearmikey.takwave.core.ax25.Fx25Receiver
 import com.fearmikey.takwave.core.ax25.HdlcDeframer
 import kotlin.math.PI
 import kotlin.math.abs
@@ -16,8 +17,8 @@ import kotlin.math.sqrt
  * local 1200 Hz and 2200 Hz oscillators and low-pass filtered, giving the envelope of each
  * tone). Several "slicers" compare mark against space using different space-tone gains, which
  * covers radios whose audio is de-emphasised, flat, or pre-emphasised. Each slicer has its own
- * clock-recovery PLL and HDLC deframer; frames found by more than one slicer are de-duplicated
- * by CRC.
+ * clock-recovery PLL, HDLC deframer and FX.25 receiver; frames found by more than one slicer
+ * (or by both the plain and the FX.25 path) are de-duplicated by CRC.
  *
  * The clock recovery is the classic software-TNC digital PLL: a phase accumulator that wraps
  * once per bit and is pulled towards zero at every data transition. The idea of scaling the
@@ -62,6 +63,15 @@ class AfskDemodulator(
     var peakLevel: Float = 0f
         private set
 
+    /**
+     * Frames delivered only thanks to FX.25: the plain decoders did not get them first. A frame
+     * that arrives intact is decoded by the plain path at its closing flag, before the check
+     * bytes have even been received, so this counts real repairs.
+     */
+    @Volatile
+    var fecRecovered: Long = 0L
+        private set
+
     private fun tapsFor(bits: Double): Int = ((sampleRate * bits / Bell202.BAUD).toInt()) or 1
 
     fun process(samples: ShortArray, offset: Int = 0, length: Int = samples.size - offset) {
@@ -99,14 +109,17 @@ class AfskDemodulator(
         dcd = false
     }
 
-    private fun deliver(frame: ByteArray) {
+    private fun deliver(frame: ByteArray, viaFec: Boolean) {
         val crc = Crc16.compute(frame) or (frame.size shl 16)
+        // An FX.25 block ends well after the frame inside it, so its window is longer.
+        val window = if (viaFec) dedupeWindow * 8 else dedupeWindow
         for (i in recentCrc.indices) {
-            if (recentCrc[i] == crc && sampleIndex - recentAt[i] < dedupeWindow) return
+            if (recentCrc[i] == crc && sampleIndex - recentAt[i] < window) return
         }
         recentCrc[recentPos] = crc
         recentAt[recentPos] = sampleIndex
         recentPos = (recentPos + 1) % recentCrc.size
+        if (viaFec) fecRecovered++
         onFrame(frame)
     }
 
@@ -134,7 +147,8 @@ class AfskDemodulator(
     }
 
     private inner class Slicer(private val spaceGain: Float) {
-        private val deframer = HdlcDeframer { deliver(it) }
+        private val deframer = HdlcDeframer { deliver(it, viaFec = false) }
+        private val fx25 = Fx25Receiver { frame, _ -> deliver(frame, viaFec = true) }
         private val step = ((1L shl 32) * Bell202.BAUD / sampleRate).toInt()
         private var pll = 0
         private var level = false
@@ -151,6 +165,7 @@ class AfskDemodulator(
 
         fun reset() {
             deframer.reset()
+            fx25.reset()
             history = 0
             locked = false
             flagHold = 0
@@ -163,7 +178,9 @@ class AfskDemodulator(
             pll += step
             if (pll < 0 && prev > 0) {
                 // The accumulator wrapped: this is the middle of a bit.
-                deframer.pushBit(newLevel == sampledLevel)
+                val bit = newLevel == sampledLevel
+                deframer.pushBit(bit)
+                fx25.pushBit(bit)
                 sampledLevel = newLevel
                 if (flagHold > 0) flagHold--
                 val flags = deframer.flagCount

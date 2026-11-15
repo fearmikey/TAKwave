@@ -27,6 +27,8 @@ data class CotEvent(
     val colorArgb: Int? = null,
     val hasUserIcon: Boolean = false,
     val hasArchive: Boolean = false,
+    /** The `<emergency>` detail of an alert or its cancellation. */
+    val emergency: EmergencyDetail? = null,
     /** True when the event carries the `<__takwave>` marker, meaning TAKwave built it from RF. */
     val fromRf: Boolean = false,
 ) {
@@ -38,6 +40,16 @@ data class CotEvent(
         const val TYPE_CHAT = "b-t-f"
     }
 }
+
+/** The `<emergency>` detail ATAK puts on `b-a-*` alert events. */
+data class EmergencyDetail(
+    /** The `type` attribute, for example "911 Alert". */
+    val type: String?,
+    /** True when `cancel="true"`. */
+    val cancel: Boolean,
+    /** The element text; ATAK writes the sender's callsign. */
+    val text: String?,
+)
 
 /** The `<__chat>` detail of a GeoChat event. */
 data class ChatDetail(

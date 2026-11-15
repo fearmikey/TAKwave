@@ -2,6 +2,25 @@
 package com.fearmikey.takwave.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -43,16 +62,69 @@ fun TakwaveTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = DarkColors, content = content)
 }
 
-/** A titled card used for every group of controls. */
+/**
+ * A small "i" in a circle. Tapping it opens a dialog that explains [title] in plain language.
+ * Drawn by hand because the app carries no icon font (see docs/DECISIONS.md).
+ */
 @Composable
-fun Section(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+fun InfoButton(title: String, text: String, modifier: Modifier = Modifier) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Box(
+        modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .clickable(role = Role.Button) { open = true }
+            .semantics { contentDescription = "More information: $title" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.size(22.dp).border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "i",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clearAndSetSemantics { },
+            )
+        }
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("Got it") } },
+            title = { Text(title) },
+            text = {
+                val scroll = rememberScrollState()
+                Text(
+                    text,
+                    Modifier.verticalScrollbar(scroll).verticalScroll(scroll).padding(end = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+        )
+    }
+}
+
+/** A titled card used for every group of controls. [info] adds an [InfoButton] next to the title. */
+@Composable
+fun Section(title: String, modifier: Modifier = Modifier, info: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = modifier.fillMaxWidth().padding(vertical = 6.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-            Box(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (info != null) InfoButton(title, info)
+            }
+            Box(Modifier.height(if (info != null) 0.dp else 8.dp))
             content()
         }
     }

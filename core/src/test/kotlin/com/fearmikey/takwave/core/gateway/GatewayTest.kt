@@ -117,7 +117,7 @@ class GatewayTest {
 
     @Test
     fun duplicateFramesAreSuppressedBriefly() {
-        a.onClientEvent(golden("chat_all_atak.xml"))
+        a.onClientEvent(golden("pli_atak.xml"))
         val frame = drain(a).single().frame
         assertNotNull(b.onRfFrame(frame).xml)
         assertEquals("duplicate", b.onRfFrame(frame).note)

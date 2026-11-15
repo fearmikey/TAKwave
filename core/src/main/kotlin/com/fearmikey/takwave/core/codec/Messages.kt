@@ -111,8 +111,66 @@ data class MarkerMessage(
     val lon: Double get() = lonE7 / 1e7
 }
 
+/** ATAK emergency alert kinds. The ordinal is the on-air code; never reorder, only append. */
+enum class EmergencyKind(val cotType: String, val label: String) {
+    CANCEL("b-a-o-can", "Cancel"),
+    ALERT_911("b-a-o-tbl", "911 Alert"),
+    RING_THE_BELL("b-a-o-pan", "Ring The Bell"),
+    IN_CONTACT("b-a-o-opn", "In Contact"),
+    GEOFENCE_BREACHED("b-a-g", "Geo-fence Breached"),
+    CUSTOM("b-a-o-c", "Custom");
+
+    companion object {
+        fun fromCotType(type: String): EmergencyKind? = entries.firstOrNull { it.cotType == type }
+
+        /** A code from a newer sender is shown as a custom alert rather than dropped: an alert must never be lost. */
+        fun fromCode(code: Int): EmergencyKind = entries.getOrElse(code) { CUSTOM }
+    }
+}
+
+/**
+ * An ATAK emergency alert (911, Ring The Bell, In Contact, ...) or its cancellation.
+ *
+ * @param uid the alert's event uid; ATAK uses `<senderUid>-9-1-1`, and the cancel reuses it
+ * @param senderUid the uid of the person raising the alert
+ * @param callsign the alert's contact callsign (ATAK writes `<callsign>-Alert`)
+ * @param text the text of the `<emergency>` element (ATAK writes the sender's callsign)
+ */
+data class EmergencyMessage(
+    val uid: String,
+    val senderUid: String,
+    val kind: EmergencyKind,
+    val callsign: String,
+    val text: String,
+    val latE7: Int,
+    val lonE7: Int,
+    val haeM: Int? = null,
+) : TakMessage {
+    override val key: String get() = uid
+    /** False for a cancellation. */
+    val active: Boolean get() = kind != EmergencyKind.CANCEL
+    val lat: Double get() = latE7 / 1e7
+    val lon: Double get() = lonE7 / 1e7
+
+    companion object {
+        /** ATAK's alert uid is the sender's uid with this suffix; such uids are not sent twice. */
+        const val UID_SUFFIX = "-9-1-1"
+    }
+}
+
 /** Outcome of decoding an over-air payload. Decoding never throws. */
 sealed interface DecodeResult {
-    data class Ok(val message: TakMessage, val encrypted: Boolean) : DecodeResult
+    /**
+     * @param hops how many times the packet was relayed by other stations; 0 when heard from its author
+     * @param ageS seconds since the author first sent the message; 0 for a first transmission
+     * @param seq the sender's position report counter (PROTOCOL.md 4.4), or null when absent
+     */
+    data class Ok(
+        val message: TakMessage,
+        val encrypted: Boolean,
+        val hops: Int = 0,
+        val ageS: Int = 0,
+        val seq: Int? = null,
+    ) : DecodeResult
     data class Error(val reason: String) : DecodeResult
 }

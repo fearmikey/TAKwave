@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.fearmikey.takwave.engine
 
+import com.fearmikey.takwave.core.codec.EmergencyMessage
+import com.fearmikey.takwave.core.gateway.HeardAlert
 import com.fearmikey.takwave.core.gateway.HeardStation
 import com.fearmikey.takwave.core.io.RfState
+import com.fearmikey.takwave.core.stats.ChannelHealth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +22,10 @@ data class RadioStatus(
     val level: Float = 0f,
     val peak: Float = 0f,
     val queueDepth: Int = 0,
+    /** Chat messages and markers held for store and forward. */
+    val heldCount: Int = 0,
+    /** Store-and-forward mode in one line, or empty when it is off. */
+    val repeatInfo: String = "",
     val heard: List<HeardStation> = emptyList(),
     val localPosition: Pair<Double, Double>? = null,
     /** True when the soft modem is in use, so calibration tones are available. */
@@ -32,6 +39,12 @@ data class RadioStatus(
     val slotInfo: String = "",
     /** Problems the operator must fix before the gateway can transmit. */
     val warnings: List<String> = emptyList(),
+    /** Emergency alerts raised by a local TAK client that this station is sending. */
+    val ownAlerts: List<EmergencyMessage> = emptyList(),
+    /** Emergency alerts heard on the air and not cancelled. */
+    val heardAlerts: List<HeardAlert> = emptyList(),
+    /** Channel statistics over the last 10 minutes; null while stopped. */
+    val health: ChannelHealth? = null,
 )
 
 enum class LogKind { RX, TX, INFO, ERROR }

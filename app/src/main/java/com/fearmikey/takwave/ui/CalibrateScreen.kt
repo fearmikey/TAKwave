@@ -35,10 +35,12 @@ fun CalibrateScreen(container: AppContainer, status: RadioStatus) {
     val duration = seconds.coerceIn(1, maxSeconds)
     val canTransmit = status.running && status.softModem && status.rf != RfState.TX
 
+    val scroll = rememberScrollState()
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScrollbar(scroll)
+            .verticalScroll(scroll)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         if (!status.running) {

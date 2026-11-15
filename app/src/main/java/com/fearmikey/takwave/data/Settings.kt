@@ -15,11 +15,19 @@ import kotlinx.coroutines.flow.map
 
 enum class PttMethod(val label: String) {
     SERIAL("Serial (RTS/DTR)"),
+    BLUETOOTH("Bluetooth serial (SPP)"),
     VOX("VOX"),
     NONE("None"),
 }
 
 enum class PttLine { RTS, DTR }
+
+/** What is sent over the Bluetooth serial link to key and unkey the radio. */
+enum class BtPttPreset(val label: String, val key: String, val unkey: String) {
+    KENWOOD("Kenwood / Elecraft CAT (TX; and RX;)", "TX;", "RX;"),
+    YAESU("Yaesu CAT (TX1; and TX0;)", "TX1;", "TX0;"),
+    CUSTOM("Custom commands", "", ""),
+}
 
 enum class ModemBackend(val label: String) {
     SOFT("Soft modem (audio)"),
@@ -38,6 +46,18 @@ enum class EncryptionMode(val label: String) {
 enum class CipherChoice(val label: String) {
     AES_GCM("AES-GCM"),
     CHACHA20_POLY1305("ChaCha20-Poly1305"),
+}
+
+/** FX.25 forward error correction on transmit. Received FX.25 is always decoded. */
+enum class Fx25Mode(val checkBytes: Int, val label: String) {
+    OFF(0, "Off (plain AX.25)"),
+    CHECK_16(16, "16 check bytes: repairs up to 8 damaged bytes"),
+    CHECK_32(32, "32 check bytes: repairs up to 16 damaged bytes"),
+    CHECK_64(64, "64 check bytes: repairs up to 32 damaged bytes");
+
+    companion object {
+        fun of(checkBytes: Int): Fx25Mode? = entries.firstOrNull { it.checkBytes == checkBytes }
+    }
 }
 
 enum class TimeSource(val label: String) {
@@ -63,6 +83,12 @@ data class Settings(
     val pttInverted: Boolean = false,
     /** "vendorId:productId" of the USB serial adapter; empty means the first one found. */
     val pttDevice: String = "",
+    /** MAC address of the paired Bluetooth serial device used for PTT; empty means none chosen. */
+    val btPttDevice: String = "",
+    val btPttPreset: BtPttPreset = BtPttPreset.KENWOOD,
+    /** Custom key and unkey commands in PttCommand syntax; used when the preset is CUSTOM. */
+    val btKeyCommand: String = "",
+    val btUnkeyCommand: String = "",
     val txDelayMs: Int = 300,
     val txTailMs: Int = 30,
     /** Output level in percent of full scale. */
@@ -85,7 +111,27 @@ data class Settings(
     /** This station's slot, or -1 to derive it from the callsign. */
     val slotIndex: Int = -1,
     val timeSource: TimeSource = TimeSource.SYSTEM,
+    /** Store and forward: send own chat and markers again when a station comes into range. */
+    val resendOwn: Boolean = true,
+    /** Store and forward: pass on chat and markers heard from other stations. Off by default. */
+    val relay: Boolean = false,
+    /** Minutes a held message stays eligible for repeats. */
+    val repeatHoldMin: Int = 30,
+    /** Most times this station repeats one message. */
+    val repeatMax: Int = 3,
+    /** Minimum seconds between two transmissions of the same message. */
+    val repeatGapS: Int = 120,
+    /** Most repeats (re-sends and relays together) per ten minutes. */
+    val repeatBudget: Int = 6,
+    /** Send own packets as FX.25 (soft modem only). */
+    val fx25: Fx25Mode = Fx25Mode.OFF,
+    /** False until the first-run setup guide has been finished or skipped. */
+    val onboardingDone: Boolean = false,
 ) {
+    /** The Bluetooth PTT commands in effect, in PttCommand syntax. */
+    val btKeyText: String get() = if (btPttPreset == BtPttPreset.CUSTOM) btKeyCommand else btPttPreset.key
+    val btUnkeyText: String get() = if (btPttPreset == BtPttPreset.CUSTOM) btUnkeyCommand else btPttPreset.unkey
+
     /** The station's AX.25 address, or null while the callsign is missing or invalid. */
     val address: Ax25Address? get() = if (callsign.isBlank()) null else Ax25Address.parse("$callsign-$ssid")
 }
@@ -119,6 +165,10 @@ class SettingsStore(context: Context) {
             pttLine = enumOf(p[PTT_LINE], d.pttLine),
             pttInverted = p[PTT_INVERTED] ?: d.pttInverted,
             pttDevice = p[PTT_DEVICE] ?: d.pttDevice,
+            btPttDevice = p[BT_PTT_DEVICE] ?: d.btPttDevice,
+            btPttPreset = enumOf(p[BT_PTT_PRESET], d.btPttPreset),
+            btKeyCommand = p[BT_KEY_COMMAND] ?: d.btKeyCommand,
+            btUnkeyCommand = p[BT_UNKEY_COMMAND] ?: d.btUnkeyCommand,
             txDelayMs = p[TX_DELAY] ?: d.txDelayMs,
             txTailMs = p[TX_TAIL] ?: d.txTailMs,
             txLevel = p[TX_LEVEL] ?: d.txLevel,
@@ -137,6 +187,14 @@ class SettingsStore(context: Context) {
             slotCount = p[SLOT_COUNT] ?: d.slotCount,
             slotIndex = p[SLOT_INDEX] ?: d.slotIndex,
             timeSource = enumOf(p[TIME_SOURCE], d.timeSource),
+            resendOwn = p[RESEND_OWN] ?: d.resendOwn,
+            relay = p[RELAY] ?: d.relay,
+            repeatHoldMin = p[REPEAT_HOLD] ?: d.repeatHoldMin,
+            repeatMax = p[REPEAT_MAX] ?: d.repeatMax,
+            repeatGapS = p[REPEAT_GAP] ?: d.repeatGapS,
+            repeatBudget = p[REPEAT_BUDGET] ?: d.repeatBudget,
+            fx25 = enumOf(p[FX25], d.fx25),
+            onboardingDone = p[ONBOARDING_DONE] ?: d.onboardingDone,
         )
     }
 
@@ -155,6 +213,10 @@ class SettingsStore(context: Context) {
         p[PTT_LINE] = s.pttLine.name
         p[PTT_INVERTED] = s.pttInverted
         p[PTT_DEVICE] = s.pttDevice
+        p[BT_PTT_DEVICE] = s.btPttDevice
+        p[BT_PTT_PRESET] = s.btPttPreset.name
+        p[BT_KEY_COMMAND] = s.btKeyCommand
+        p[BT_UNKEY_COMMAND] = s.btUnkeyCommand
         p[TX_DELAY] = s.txDelayMs
         p[TX_TAIL] = s.txTailMs
         p[TX_LEVEL] = s.txLevel
@@ -173,6 +235,14 @@ class SettingsStore(context: Context) {
         p[SLOT_COUNT] = s.slotCount
         p[SLOT_INDEX] = s.slotIndex
         p[TIME_SOURCE] = s.timeSource.name
+        p[RESEND_OWN] = s.resendOwn
+        p[RELAY] = s.relay
+        p[REPEAT_HOLD] = s.repeatHoldMin
+        p[REPEAT_MAX] = s.repeatMax
+        p[REPEAT_GAP] = s.repeatGapS
+        p[REPEAT_BUDGET] = s.repeatBudget
+        p[FX25] = s.fx25.name
+        p[ONBOARDING_DONE] = s.onboardingDone
     }
 
     private inline fun <reified E : Enum<E>> enumOf(name: String?, default: E): E =
@@ -211,5 +281,17 @@ class SettingsStore(context: Context) {
         val SLOT_COUNT = intPreferencesKey("slot_count")
         val SLOT_INDEX = intPreferencesKey("slot_index")
         val TIME_SOURCE = stringPreferencesKey("time_source")
+        val BT_PTT_DEVICE = stringPreferencesKey("bt_ptt_device")
+        val BT_PTT_PRESET = stringPreferencesKey("bt_ptt_preset")
+        val BT_KEY_COMMAND = stringPreferencesKey("bt_key_command")
+        val BT_UNKEY_COMMAND = stringPreferencesKey("bt_unkey_command")
+        val ONBOARDING_DONE = booleanPreferencesKey("onboarding_done")
+        val RESEND_OWN = booleanPreferencesKey("resend_own")
+        val RELAY = booleanPreferencesKey("relay")
+        val REPEAT_HOLD = intPreferencesKey("repeat_hold_min")
+        val REPEAT_MAX = intPreferencesKey("repeat_max")
+        val REPEAT_GAP = intPreferencesKey("repeat_gap_s")
+        val REPEAT_BUDGET = intPreferencesKey("repeat_budget")
+        val FX25 = stringPreferencesKey("fx25")
     }
 }

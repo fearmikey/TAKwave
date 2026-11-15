@@ -26,6 +26,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -46,10 +48,15 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.fearmikey.takwave.AppContainer
+import com.fearmikey.takwave.core.codec.EmergencyMessage
+import com.fearmikey.takwave.core.gateway.HeardAlert
 import com.fearmikey.takwave.core.gateway.HeardStation
+import com.fearmikey.takwave.core.stats.ChannelEvent
+import com.fearmikey.takwave.core.stats.ChannelHealth
 import com.fearmikey.takwave.core.io.RfState
 import com.fearmikey.takwave.core.sched.Geo
 import com.fearmikey.takwave.data.ModemBackend
+import com.fearmikey.takwave.data.PttMethod
 import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.engine.RadioStatus
 import com.fearmikey.takwave.net.Sharing
@@ -57,7 +64,7 @@ import com.fearmikey.takwave.service.TakwaveService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-private fun granted(context: Context, permission: String) =
+internal fun granted(context: Context, permission: String) =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
 @Composable
@@ -84,6 +91,12 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !granted(context, Manifest.permission.POST_NOTIFICATIONS)) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
+            // Optional here: without it the engine reports that Bluetooth PTT is unavailable and does not transmit.
+            if (settings.backend == ModemBackend.SOFT && settings.pttMethod == PttMethod.BLUETOOTH &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !granted(context, Manifest.permission.BLUETOOTH_CONNECT)
+            ) {
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
         }
         if (needed.isEmpty()) {
             message = null
@@ -93,10 +106,12 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
         }
     }
 
+    val scroll = rememberScrollState()
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScrollbar(scroll)
+            .verticalScroll(scroll)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -118,6 +133,12 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
             }
         }
 
+        for (a in status.ownAlerts) OwnAlertCard(a)
+        if (status.heardAlerts.isNotEmpty()) {
+            val now = System.currentTimeMillis()
+            for (a in status.heardAlerts) HeardAlertCard(a, status.localPosition, now)
+        }
+
         message?.let { WarningCard(it) }
         if (settings.address == null) {
             WarningCard("Set your callsign in Settings. TAKwave will not transmit without a valid callsign.")
@@ -135,6 +156,13 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
             }
             if (status.slotInfo.isNotEmpty()) {
                 Text(status.slotInfo, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+            }
+            if (status.repeatInfo.isNotEmpty()) {
+                Text(
+                    "${status.repeatInfo}; ${status.heldCount} held",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
             Spacer(Modifier.height(12.dp))
             Text("Input level", style = MaterialTheme.typography.labelMedium)
@@ -170,6 +198,9 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
         }
 
         BatteryCard()
+
+        val health = status.health
+        if (status.running && health != null) ChannelHealthSection(health)
 
         Section("Heard") {
             if (status.heard.isEmpty()) {
@@ -229,10 +260,93 @@ private fun HeardRow(h: HeardStation, local: Pair<Double, Double>?, nowMs: Long)
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(formatAge(nowMs - h.lastHeardMs), style = MaterialTheme.typography.bodyMedium)
-            Text("${h.packets} pkt", style = MaterialTheme.typography.labelSmall)
+            val reception = h.pliReception?.let { " · PLI ${percent(it)}" } ?: ""
+            Text("${h.packets} pkt$reception", style = MaterialTheme.typography.labelSmall)
         }
     }
 }
+
+/** A card in the alarm colour; alerts must stand out from ordinary warnings. */
+@Composable
+private fun AlertCard(title: String, detail: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = TxRed, contentColor = Color.White),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                InfoButton("Emergency alerts", HelpText.EMERGENCY)
+            }
+            Text(detail, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun OwnAlertCard(a: EmergencyMessage) {
+    AlertCard(
+        "Sending: ${a.kind.label}",
+        "Your alert goes out ahead of all other traffic and is repeated every 30 s with your position until you cancel it in ATAK.",
+    )
+}
+
+@Composable
+private fun HeardAlertCard(a: HeardAlert, local: Pair<Double, Double>?, nowMs: Long) {
+    val m = a.message
+    val who = m.text.ifEmpty { m.callsign }.ifEmpty { a.source }
+    val where = if (local != null && (m.latE7 != 0 || m.lonE7 != 0)) {
+        val d = Geo.distanceM(local.first, local.second, m.lat, m.lon)
+        val b = Geo.bearingDeg(local.first, local.second, m.lat, m.lon)
+        "${formatDistance(d)} at %03d°".format(b.toInt())
+    } else {
+        null
+    }
+    val via = if (a.relayed) "relayed by ${a.source}" else "from ${a.source}"
+    AlertCard(
+        "EMERGENCY: ${m.kind.label} – $who",
+        listOfNotNull(where, via, "raised ${formatAge(nowMs - a.originMs)}", "last heard ${formatAge(nowMs - a.lastHeardMs)}")
+            .joinToString(" · "),
+    )
+}
+
+@Composable
+private fun ChannelHealthSection(h: ChannelHealth) {
+    val minutes = maxOf(1L, h.windowMs / 60_000L)
+    Section("Channel health (last $minutes min)", info = HelpText.CHANNEL_HEALTH) {
+        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Stat("Channel busy", h.busyFraction?.let { percent(it) } ?: "n/a")
+            Stat("My air time", "${percent(h.ownAirtimeFraction)} (${h.ownAirtimeMs / 1000} s)")
+            Stat("Repaired by FX.25", h[ChannelEvent.RX_REPAIRED].toString())
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Received: ${h[ChannelEvent.RX_DELIVERED]} delivered, ${h[ChannelEvent.RX_REPEAT]} repeats, " +
+                "${h[ChannelEvent.RX_OTHER]} other traffic, ${h[ChannelEvent.RX_INVALID]} unreadable",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            "Sent: ${h[ChannelEvent.TX]} new, ${h[ChannelEvent.TX_REPEAT]} repeats, ${h[ChannelEvent.TX_FAILED]} failed, " +
+                "${h[ChannelEvent.QUEUE_DROPPED]} dropped from the queue",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val hints = buildList {
+            if ((h.busyFraction ?: 0f) > ChannelHealth.BUSY_WARNING) {
+                add("The channel is congested. Lengthen the PLI interval or turn on time slots.")
+            }
+            if (h.ownAirtimeFraction > ChannelHealth.AIRTIME_WARNING) {
+                add("This station is using a large share of the channel. Lengthen the PLI interval or lower the repeat limits.")
+            }
+            if (h[ChannelEvent.TX_FAILED] > 0) add("Some packets could not get on the air in time; see the Log tab.")
+            if (h[ChannelEvent.RX_INVALID] > 0) {
+                add("Some TAKwave packets could not be read. Check that every station uses the same encryption mode and key.")
+            }
+        }
+        for (hint in hints) Text(hint, style = MaterialTheme.typography.bodySmall, color = WarnAmber, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+private fun percent(f: Float): String = "%.0f%%".format(f * 100)
 
 private fun formatDistance(m: Double): String = if (m < 1000) "%.0f m".format(m) else "%.1f km".format(m / 1000)
 
@@ -262,21 +376,25 @@ private fun BatteryCard() {
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = {
-            val direct = Intent(
-                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                Uri.parse("package:${context.packageName}"),
-            )
-            try {
-                context.startActivity(direct)
-            } catch (e: Exception) {
-                // Some devices do not offer the direct prompt; fall back to the system list.
-                try {
-                    context.startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                } catch (ignored: Exception) {
-                    // No settings screen available; nothing more the app can do.
-                }
-            }
-        }) { Text("Allow background running") }
+        OutlinedButton(onClick = { requestBatteryExemption(context) }) { Text("Allow background running") }
+    }
+}
+
+/** Shows the system prompt that exempts TAKwave from battery optimisation. */
+@SuppressLint("BatteryLife")
+internal fun requestBatteryExemption(context: Context) {
+    val direct = Intent(
+        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${context.packageName}"),
+    )
+    try {
+        context.startActivity(direct)
+    } catch (e: Exception) {
+        // Some devices do not offer the direct prompt; fall back to the system list.
+        try {
+            context.startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        } catch (ignored: Exception) {
+            // No settings screen available; nothing more the app can do.
+        }
     }
 }
