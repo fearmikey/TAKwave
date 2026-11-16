@@ -63,7 +63,8 @@ private enum class RadioSetup(val label: String, val detail: String) {
     ),
     VOX_CABLE(
         "Audio cable, radio on VOX",
-        "A plain audio cable or USB sound card. The radio keys itself when it hears audio.",
+        "A plain audio cable or USB sound card. The radio, or an auto-PTT cable such as the BTECH APRS-K1 PRO, " +
+            "keys itself when it hears audio.",
     ),
     BLUETOOTH(
         "Bluetooth serial PTT",
@@ -107,7 +108,7 @@ private fun stepsFor(setup: RadioSetup?): List<Step> = buildList {
 private fun applySetup(s: Settings, setup: RadioSetup): Settings = when (setup) {
     RadioSetup.USB_INTERFACE -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.SERIAL)
     // VOX needs time to trip before data starts.
-    RadioSetup.VOX_CABLE -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.VOX, txDelayMs = maxOf(s.txDelayMs, 500))
+    RadioSetup.VOX_CABLE -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.VOX, txDelayMs = maxOf(s.txDelayMs, VOX_MIN_TX_DELAY_MS))
     RadioSetup.BLUETOOTH -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.BLUETOOTH)
     RadioSetup.KISS_TNC -> s.copy(backend = ModemBackend.KISS_TCP)
     RadioSetup.ACOUSTIC -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.VOX, inputDevice = "", outputDevice = "")
@@ -116,7 +117,7 @@ private fun applySetup(s: Settings, setup: RadioSetup): Settings = when (setup) 
 /**
  * First-run guide: permissions, then an optional quick start that asks only for the settings the
  * chosen radio setup needs. Every value is stored as it is entered, using the same controls as
- * the Settings tab. Finishing or skipping sets [Settings.onboardingDone].
+ * the Settings screens. Finishing or skipping sets [Settings.onboardingDone].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -217,7 +218,15 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
                     } else {
                         StepHeader("PTT adapter", "Choose the USB serial adapter that keys the radio. Turn the radio's own VOX off.")
                         Section("Serial PTT", info = HelpText.SERIAL_PTT) {
-                            SerialPttSettings(settings, deviceTick.intValue) { update(it) }
+                            // Switching to VOX drops the PTT step, so the same index lands on Transmit.
+                            SerialPttSettings(
+                                settings,
+                                deviceTick.intValue,
+                                onUseVox = {
+                                    setup = RadioSetup.VOX_CABLE
+                                    update { applySetup(it, RadioSetup.VOX_CABLE) }
+                                },
+                            ) { update(it) }
                         }
                     }
                     Step.KISS -> {
@@ -236,15 +245,16 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
                     Step.TRANSMIT -> {
                         StepHeader(
                             "Transmit timing and level",
-                            "These starting values work for most radios. You can fine-tune them later on the Calibrate tab.",
+                            "These starting values work for most radios. You can fine-tune them later in Settings > Radio & audio > Calibrate levels.",
                         )
                         Section("Transmit", info = HelpText.TRANSMIT) {
                             IntSetting("TXDELAY (ms)", settings.txDelayMs, 50..2000) { v -> update { it.copy(txDelayMs = v) } }
                             IntSetting("TX audio level (%)", settings.txLevel, 1..100) { v -> update { it.copy(txLevel = v) } }
                             if (settings.pttMethod == PttMethod.VOX) {
                                 Text(
-                                    "With VOX, turn VOX on in the radio's menu at its most sensitive setting. If the other " +
-                                        "station misses the start of your packets, raise TXDELAY.",
+                                    "With a plain audio cable, turn VOX on in the radio's menu at its most sensitive setting. " +
+                                        "An auto-PTT cable such as the BTECH APRS-K1 PRO keys the radio itself, so leave the " +
+                                        "radio's VOX off. If the other station misses the start of your packets, raise TXDELAY.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
@@ -272,12 +282,12 @@ private fun WelcomePage() {
             "app ready: first the permissions Android needs, then, if you like, the settings for your radio.",
     )
     WarningCard(
-        "You need a licence to transmit, and you are responsible for following the rules of the radio service " +
+        "You need a license to transmit, and you are responsible for following the rules of the radio service " +
             "you operate in.",
     )
     Text(
         "Tap the round \"i\" next to a heading whenever you are not sure what something means. You can leave " +
-            "the guide at any time with Skip; everything here is also on the Settings tab.",
+            "the guide at any time with Skip; everything here is also in Settings (gear icon, top bar).",
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(top = 8.dp),
     )
@@ -360,7 +370,7 @@ private fun OfferPage(onYes: () -> Unit, onNo: () -> Unit) {
     Spacer(Modifier.height(8.dp))
     OutlinedButton(onClick = onNo, modifier = Modifier.fillMaxWidth()) { Text("No thanks, I'll set it up myself") }
     Text(
-        "You can run the guide again later from the bottom of the Settings tab.",
+        "You can run the guide again later from the bottom of the Settings screen.",
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(top = 8.dp),
     )
@@ -424,12 +434,12 @@ private fun DonePage(settings: Settings, setup: RadioSetup?) {
     }
     Section("Next steps") {
         val steps = buildList {
-            add("On the Status tab, press Start.")
+            add("On the Status screen, press Start.")
             add("Press \"Export ATAK data package\" and share it to ATAK so it connects to TAKwave.")
             if (settings.backend == ModemBackend.SOFT) {
-                add("On the Calibrate tab, set the receive volume and the transmit level before going on the air.")
+                add("Under Adjust levels on the Status screen, set the receive volume and the transmit level before going on the air.")
             }
-            add("If the gateway was already running, restart it from the Settings tab so the new settings apply.")
+            add("If the gateway was already running, restart it from the top of Settings so the new settings apply.")
         }
         steps.forEachIndexed { i, text ->
             Text("${i + 1}. $text", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 2.dp))

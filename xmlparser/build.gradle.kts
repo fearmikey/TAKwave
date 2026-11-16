@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Repackages the kXML 2 parser (BSD licence, from Maven Central) for use on Android.
+// Repackages the kXML 2 parser (BSD license, from Maven Central) for use on Android.
 //
 // The upstream jar bundles a copy of the org.xmlpull.v1 API. Android already ships that API in
 // the platform, and R8 refuses to build an app that redefines it ("Library class ... implements

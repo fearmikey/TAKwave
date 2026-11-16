@@ -32,6 +32,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +69,7 @@ internal fun granted(context: Context, permission: String) =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
 @Composable
-fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatus) {
+fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatus, onCalibrate: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf<String?>(null) }
@@ -165,7 +166,12 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Text("Input level", style = MaterialTheme.typography.labelMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Input level", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                if (settings.backend == ModemBackend.SOFT) {
+                    TextButton(onClick = onCalibrate) { Text("Adjust levels") }
+                }
+            }
             LevelMeter(status.level, status.peak)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -266,7 +272,7 @@ private fun HeardRow(h: HeardStation, local: Pair<Double, Double>?, nowMs: Long)
     }
 }
 
-/** A card in the alarm colour; alerts must stand out from ordinary warnings. */
+/** A card in the alarm color; alerts must stand out from ordinary warnings. */
 @Composable
 private fun AlertCard(title: String, detail: String) {
     Card(
@@ -337,7 +343,7 @@ private fun ChannelHealthSection(h: ChannelHealth) {
             if (h.ownAirtimeFraction > ChannelHealth.AIRTIME_WARNING) {
                 add("This station is using a large share of the channel. Lengthen the PLI interval or lower the repeat limits.")
             }
-            if (h[ChannelEvent.TX_FAILED] > 0) add("Some packets could not get on the air in time; see the Log tab.")
+            if (h[ChannelEvent.TX_FAILED] > 0) add("Some packets could not get on the air in time; see the log (list icon, top bar).")
             if (h[ChannelEvent.RX_INVALID] > 0) {
                 add("Some TAKwave packets could not be read. Check that every station uses the same encryption mode and key.")
             }
@@ -359,7 +365,7 @@ private fun formatAge(ms: Long): String {
     }
 }
 
-/** Asks for a battery optimisation exemption so Doze does not suspend the gateway. */
+/** Asks for a battery optimization exemption so Doze does not suspend the gateway. */
 @SuppressLint("BatteryLife")
 @Composable
 private fun BatteryCard() {
@@ -372,7 +378,7 @@ private fun BatteryCard() {
     if (exempt) return
     Section("Battery") {
         Text(
-            "Android may pause TAKwave when the screen is off. Allow it to ignore battery optimisation so packets keep flowing.",
+            "Android may pause TAKwave when the screen is off. Allow it to ignore battery optimization so packets keep flowing.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(8.dp))
@@ -380,7 +386,7 @@ private fun BatteryCard() {
     }
 }
 
-/** Shows the system prompt that exempts TAKwave from battery optimisation. */
+/** Shows the system prompt that exempts TAKwave from battery optimization. */
 @SuppressLint("BatteryLife")
 internal fun requestBatteryExemption(context: Context) {
     val direct = Intent(

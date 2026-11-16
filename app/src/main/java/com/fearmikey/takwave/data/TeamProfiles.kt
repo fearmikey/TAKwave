@@ -23,6 +23,7 @@ fun Settings.toTeamProfile(name: String, assignments: Map<String, Int>): TeamPro
     repeatBudget = repeatBudget,
     encryption = encryption.name,
     cipher = cipher.name,
+    hideCallsign = hideCallsign,
     fx25CheckBytes = fx25.checkBytes,
 )
 
@@ -64,6 +65,7 @@ fun Settings.withTeamProfile(profile: TeamProfile): Settings {
         repeatBudget = profile.repeatBudget ?: repeatBudget,
         encryption = enc ?: encryption,
         cipher = ciph ?: cipher,
+        hideCallsign = profile.hideCallsign ?: hideCallsign,
         fx25 = fx ?: fx25,
     )
 }
@@ -94,4 +96,5 @@ fun profileChanges(old: Settings, new: Settings): List<String> = buildList {
     if (new.encryption != EncryptionMode.OFF && new.encryption != EncryptionMode.ECIES_TEAM) {
         diff("Cipher", old.cipher, new.cipher) { it.label }
     }
+    if (new.encryption != EncryptionMode.OFF) diff("Encrypt callsign too", old.hideCallsign, new.hideCallsign, onOff)
 }

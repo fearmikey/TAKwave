@@ -44,6 +44,7 @@ import com.fearmikey.takwave.data.PttMethod
 import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.net.CotServer
 import com.fearmikey.takwave.ptt.BluetoothPtt
+import com.fearmikey.takwave.ptt.SerialDevices
 import com.fearmikey.takwave.ptt.SerialPtt
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -133,7 +134,15 @@ class RadioEngine(
                 }
             }
 
-            cipherInfo = crypto?.description ?: ""
+            // Hiding needs a working cipher; when the cipher failed, transmitting is already off.
+            val hideSource = settings.callsignHidden && crypto != null
+            if (hideSource) {
+                info(
+                    "Callsign hidden: frames go out as ${Gateway.HIDDEN_SOURCE} with $address inside the encrypted payload. " +
+                        "Identify your station by other means as your license requires.",
+                )
+            }
+            cipherInfo = (crypto?.description ?: "") + if (hideSource) ", callsign hidden" else ""
             val gw = Gateway(
                 clock = Clock.SYSTEM,
                 source = if (canTransmit) address else null,
@@ -152,6 +161,7 @@ class RadioEngine(
                     minGapMs = settings.repeatGapS * 1000L,
                     budgetPer10Min = settings.repeatBudget,
                 ),
+                hideSource = hideSource,
             )
             gateway = gw
             restoreState(gw)
@@ -228,7 +238,14 @@ class RadioEngine(
             } catch (e: Exception) {
                 // Without working PTT a transmission would just be audio into an unkeyed radio.
                 pttLost = true
-                warn("Serial PTT unavailable: ${e.message}. Transmitting is disabled.")
+                // A USB sound card without any serial adapter is most likely a cable that keys the radio itself.
+                val hint = if (SerialDevices.list(context).isEmpty() && AudioDevices.hasUsbAudio(context)) {
+                    " A USB sound card is connected but it has no serial port. If it is a cable that keys the radio " +
+                        "from the audio, such as the BTECH APRS-K1 PRO, set the PTT method to VOX and leave the radio's own VOX off."
+                } else {
+                    ""
+                }
+                warn("Serial PTT unavailable: ${e.message}. Transmitting is disabled.$hint")
                 NoPtt
             }
             PttMethod.BLUETOOTH -> try {
@@ -281,7 +298,7 @@ class RadioEngine(
             val config = SlotConfig(slotMs = settings.slotLengthMs, slotCount = count, slotIndex = index)
             slotInfo = "Time slot ${index + 1} of $count, ${settings.slotLengthMs / 1000.0} s each" +
                 if (settings.slotIndex < 0) " (slot chosen from callsign)" else ""
-            // The longest packet must fit a slot, or it would always spill into a neighbour's.
+            // The longest packet must fit a slot, or it would always spill into a neighbor's.
             val longestMs = settings.txDelayMs + settings.txTailMs + (272 * 8 * 1000L / 1200) * 7 / 6
             if (longestMs + config.guardMs > settings.slotLengthMs) {
                 warn("The slot length is shorter than the longest packet (about ${longestMs / 100 / 10.0} s). Long chat messages will overrun their slot.")
@@ -327,7 +344,11 @@ class RadioEngine(
         val outcome = gw.onRfFrame(frame)
         val hex = PacketCodec.toHex(frame)
         if (outcome.xml != null && outcome.message != null) {
-            val lock = if (outcome.encrypted) " [encrypted]" else ""
+            val lock = when {
+                outcome.hiddenSource -> " [encrypted, callsign hidden]"
+                outcome.encrypted -> " [encrypted]"
+                else -> ""
+            }
             val via = if (outcome.relayed) " [relayed]" else ""
             val age = when {
                 outcome.ageS <= 0 -> ""

@@ -6,27 +6,31 @@ import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fearmikey.takwave.core.profile.TeamProfile
 import com.fearmikey.takwave.data.Settings
@@ -35,6 +39,9 @@ import com.fearmikey.takwave.ui.CalibrateScreen
 import com.fearmikey.takwave.ui.LogScreen
 import com.fearmikey.takwave.ui.OnboardingScreen
 import com.fearmikey.takwave.ui.ProfileImportDialog
+import com.fearmikey.takwave.ui.RadioGuideScreen
+import com.fearmikey.takwave.ui.SettingsPage
+import com.fearmikey.takwave.ui.SettingsPageScreen
 import com.fearmikey.takwave.ui.SettingsScreen
 import com.fearmikey.takwave.ui.StatusScreen
 import com.fearmikey.takwave.ui.TakwaveTheme
@@ -75,12 +82,43 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val TABS = listOf("Status", "Settings", "Log", "Calibrate", "About")
+/**
+ * Every screen except Status, which is home. They open from the top bar icons, the Settings list
+ * or the Status screen and stack up; Back (arrow or gesture) closes them one at a time.
+ */
+private enum class Screen(val title: String, val page: SettingsPage? = null) {
+    SETTINGS("Settings"),
+    STATION(SettingsPage.STATION.title, SettingsPage.STATION),
+    RADIO(SettingsPage.RADIO.title, SettingsPage.RADIO),
+    CHANNEL(SettingsPage.CHANNEL.title, SettingsPage.CHANNEL),
+    SECURITY(SettingsPage.SECURITY.title, SettingsPage.SECURITY),
+    CALIBRATE("Calibrate levels"),
+    RADIO_GUIDE("Radio guide"),
+    LOG("Log"),
+    ABOUT("About"),
+}
+
+/** The back stack survives rotation and process death as a list of screen names. */
+private val BackStackSaver = listSaver<SnapshotStateList<Screen>, String>(
+    save = { stack -> stack.map { it.name } },
+    restore = { names -> names.map { Screen.valueOf(it) }.toMutableStateList() },
+)
+
+private const val HOME_KEY = "STATUS"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TakwaveRoot(container: AppContainer) {
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val stack = rememberSaveable(saver = BackStackSaver) { mutableStateListOf() }
+    // Keeps each open screen's saveable state (scroll position) while another is on top of it.
+    val screenState = rememberSaveableStateHolder()
+    fun open(screen: Screen) {
+        stack.add(screen)
+    }
+    fun back() {
+        val closed = stack.removeAt(stack.lastIndex)
+        screenState.removeState(closed.name)
+    }
     val settings: Settings? by container.settingsStore.settings.collectAsStateWithLifecycle(initialValue = null)
     val status by container.status.collectAsStateWithLifecycle()
     val pendingProfile by container.pendingProfile.collectAsStateWithLifecycle()
@@ -91,23 +129,44 @@ private fun TakwaveRoot(container: AppContainer) {
         if (forReview != null) ProfileImportDialog(container, s, forReview) { container.pendingProfile.value = null }
     }
 
-    // First run (or "Run the setup guide again" in Settings): the guide replaces the tabs.
+    // First run (or "Run the setup guide again" in Settings): the guide replaces everything, and
+    // the app comes back to the Status screen afterward.
     val current = settings
     if (current != null && !current.onboardingDone) {
+        LaunchedEffect(Unit) { while (stack.isNotEmpty()) back() }
         OnboardingScreen(container, current)
         return
     }
 
+    BackHandler(enabled = stack.isNotEmpty()) { back() }
+
+    val top = stack.lastOrNull()
     Scaffold(
         topBar = {
-            Column {
-                TopAppBar(title = { Text("TAKwave") })
-                // Scrollable: five labels do not fit a fixed row on narrow phones.
-                PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp) {
-                    TABS.forEachIndexed { index, title ->
-                        Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
-                    }
-                }
+            if (top != null) {
+                TopAppBar(
+                    title = { Text(top.title) },
+                    navigationIcon = {
+                        IconButton(onClick = { back() }) {
+                            Icon(painterResource(R.drawable.ic_back), contentDescription = "Back")
+                        }
+                    },
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("TAKwave") },
+                    actions = {
+                        IconButton(onClick = { open(Screen.LOG) }) {
+                            Icon(painterResource(R.drawable.ic_log), contentDescription = "Packet log")
+                        }
+                        IconButton(onClick = { open(Screen.SETTINGS) }) {
+                            Icon(painterResource(R.drawable.ic_settings), contentDescription = "Settings")
+                        }
+                        IconButton(onClick = { open(Screen.ABOUT) }) {
+                            Icon(painterResource(R.drawable.ic_about), contentDescription = "About TAKwave")
+                        }
+                    },
+                )
             }
         },
     ) { padding ->
@@ -119,12 +178,23 @@ private fun TakwaveRoot(container: AppContainer) {
                 .imePadding(),
         ) {
             val s = settings ?: return@Box // DataStore has not delivered the first value yet.
-            when (tab) {
-                0 -> StatusScreen(container, s, status)
-                1 -> SettingsScreen(container, s, status)
-                2 -> LogScreen(container)
-                3 -> CalibrateScreen(container, status)
-                else -> AboutScreen()
+            val page = top?.page
+            screenState.SaveableStateProvider(top?.name ?: HOME_KEY) {
+                when {
+                    page != null -> SettingsPageScreen(
+                        page, container, s, status,
+                        onCalibrate = { open(Screen.CALIBRATE) },
+                        onRadioGuide = { open(Screen.RADIO_GUIDE) },
+                    )
+                    top == null -> StatusScreen(container, s, status, onCalibrate = { open(Screen.CALIBRATE) })
+                    top == Screen.SETTINGS -> SettingsScreen(container, s, status) { p ->
+                        open(Screen.entries.first { it.page == p })
+                    }
+                    top == Screen.CALIBRATE -> CalibrateScreen(container, s, status)
+                    top == Screen.RADIO_GUIDE -> RadioGuideScreen(container, s, onCalibrate = { open(Screen.CALIBRATE) })
+                    top == Screen.LOG -> LogScreen(container)
+                    else -> AboutScreen()
+                }
             }
         }
     }

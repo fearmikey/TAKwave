@@ -15,6 +15,7 @@ import com.fearmikey.takwave.core.io.PttCommand
 import com.fearmikey.takwave.data.BtPttPreset
 import com.fearmikey.takwave.ptt.BluetoothDevices
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -42,7 +46,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -51,9 +57,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.fearmikey.takwave.AppContainer
+import com.fearmikey.takwave.R
 import com.fearmikey.takwave.audio.AudioDeviceOption
 import com.fearmikey.takwave.audio.AudioDevices
 import com.fearmikey.takwave.core.ax25.Ax25Address
+import com.fearmikey.takwave.core.gateway.Gateway
 import com.fearmikey.takwave.data.CipherChoice
 import com.fearmikey.takwave.data.EncryptionMode
 import com.fearmikey.takwave.data.Fx25Mode
@@ -76,16 +84,95 @@ import com.fearmikey.takwave.service.TakwaveService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** The groups of settings. Each opens on its own page from the list on the Settings screen. */
+enum class SettingsPage(val title: String) {
+    STATION("Station & TAK"),
+    RADIO("Radio & audio"),
+    CHANNEL("Channel"),
+    SECURITY("Security"),
+}
+
+/** The Settings screen: one row per [SettingsPage] with a summary of its current values. */
 @Composable
-fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioStatus) {
-    val context = LocalContext.current
+fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioStatus, onOpen: (SettingsPage) -> Unit) {
     val scope = rememberCoroutineScope()
-    fun update(transform: (Settings) -> Settings) {
+    SettingsColumn(status) {
+        for (page in SettingsPage.entries) {
+            val (summary, attention) = page.summary(settings)
+            CategoryRow(page.title, summary, attention) { onOpen(page) }
+        }
+
+        Section("Setup guide") {
+            Text(
+                "Walks through permissions and the settings your radio needs, one step at a time.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = {
+                scope.launch { container.settingsStore.update { it.copy(onboardingDone = false) } }
+            }) { Text("Run the setup guide again") }
+        }
+    }
+}
+
+/**
+ * One group of settings. [onCalibrate] and [onRadioGuide] open the calibration screen and the radio
+ * guide from the Radio & audio page.
+ */
+@Composable
+fun SettingsPageScreen(
+    page: SettingsPage,
+    container: AppContainer,
+    settings: Settings,
+    status: RadioStatus,
+    onCalibrate: () -> Unit,
+    onRadioGuide: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val update: ((Settings) -> Settings) -> Unit = { transform ->
         scope.launch { container.settingsStore.update(transform) }
     }
+    when (page) {
+        SettingsPage.STATION -> StationPage(container, settings, status, update)
+        SettingsPage.RADIO -> RadioPage(settings, status, onCalibrate, onRadioGuide, update)
+        SettingsPage.CHANNEL -> ChannelPage(settings, status, update)
+        SettingsPage.SECURITY -> SecurityPage(container, settings, status, update)
+    }
+}
 
-    val deviceTick = rememberDeviceTick()
+/** A one-line summary of the page's current values, and whether it needs the operator's attention. */
+private fun SettingsPage.summary(s: Settings): Pair<String, Boolean> = when (this) {
+    SettingsPage.STATION ->
+        (s.address?.let { "$it, TAK port ${s.takPort}" } ?: "No callsign set") to (s.address == null)
+    SettingsPage.RADIO -> when (s.backend) {
+        ModemBackend.SOFT -> "Soft modem, PTT: ${s.pttMethod.label}" to false
+        ModemBackend.KISS_TCP ->
+            "KISS TNC at ${s.kissHost.ifBlank { "(no host)" }}:${s.kissPort}" to s.kissHost.isBlank()
+    }
+    SettingsPage.CHANNEL -> {
+        val parts = buildList {
+            if (s.backend == ModemBackend.SOFT) {
+                add(if (s.fx25 == Fx25Mode.OFF) "FX.25 off" else "FX.25 on")
+                add(if (s.slotted) "time slots" else "CSMA")
+            }
+            val repeats = listOfNotNull("re-sending".takeIf { s.resendOwn }, "relaying".takeIf { s.relay })
+            add(if (repeats.isEmpty()) "store and forward off" else repeats.joinToString(" and "))
+        }
+        parts.joinToString(", ").replaceFirstChar { it.uppercase() } to false
+    }
+    SettingsPage.SECURITY ->
+        when {
+            s.encryption == EncryptionMode.OFF -> "Encryption off"
+            s.callsignHidden -> "Encryption: ${s.encryption.label}, callsign hidden"
+            else -> "Encryption: ${s.encryption.label}"
+        } to (s.encryption != EncryptionMode.OFF)
+}
 
+/** Scrolling column for the Settings screens, with the restart prompt on top while the gateway runs. */
+@Composable
+private fun SettingsColumn(status: RadioStatus, content: @Composable ColumnScope.() -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
     Column(
         Modifier
@@ -108,7 +195,37 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 }) { Text("Restart gateway now") }
             }
         }
+        content()
+        Spacer(Modifier.height(24.dp))
+    }
+}
 
+/** A tappable card on the Settings list that opens a page. */
+@Composable
+private fun CategoryRow(title: String, summary: String, attention: Boolean, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (attention) WarnAmber else Color.Unspecified,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Icon(painterResource(R.drawable.ic_chevron), contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun StationPage(container: AppContainer, settings: Settings, status: RadioStatus, update: ((Settings) -> Settings) -> Unit) {
+    SettingsColumn(status) {
         Section("Station", info = HelpText.CALLSIGN) {
             TextSetting(
                 label = "Callsign (required)",
@@ -130,7 +247,12 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
         }
 
         Section("TAK server", info = HelpText.TAK_SERVER) {
-            IntSetting("TCP port", settings.takPort, 1024..65535) { v -> update { it.copy(takPort = v) } }
+            IntSetting(
+                "TCP port",
+                settings.takPort,
+                1024..65535,
+                reject = { if (it == Settings.ATAK_INPUT_PORT) "ATAK itself listens on ${Settings.ATAK_INPUT_PORT}; choose another port" else null },
+            ) { v -> update { it.copy(takPort = v) } }
             SwitchSetting(
                 "Allow LAN clients",
                 "Listen on all interfaces so another device (for example iTAK on this phone's hotspot) can connect. " +
@@ -146,31 +268,33 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
             IntSetting("Send early after turning (degrees)", settings.pliHeadingDeg, 5..180) { v -> update { it.copy(pliHeadingDeg = v) } }
         }
 
-        Section("Store and forward", info = HelpText.STORE_FORWARD) {
-            SwitchSetting(
-                "Send my messages again",
-                "When a station comes into range that missed one of your chat messages or markers, send it once more.",
-                settings.resendOwn,
-            ) { v -> update { it.copy(resendOwn = v) } }
-            SwitchSetting(
-                "Relay for other stations",
-                "Pass on chat, markers and emergency alerts heard from other stations, under your callsign. Use on " +
-                    "one well-placed station only.",
-                settings.relay,
-            ) { v -> update { it.copy(relay = v) } }
-            if (settings.resendOwn || settings.relay) {
-                Spacer(Modifier.height(8.dp))
-                Text("Limits", style = MaterialTheme.typography.labelLarge)
-                IntSetting("Keep messages for (minutes)", settings.repeatHoldMin, 5..240) { v -> update { it.copy(repeatHoldMin = v) } }
-                IntSetting("Repeats per message", settings.repeatMax, 1..10) { v -> update { it.copy(repeatMax = v) } }
-                IntSetting("Minimum gap between repeats (s)", settings.repeatGapS, 30..1800) { v -> update { it.copy(repeatGapS = v) } }
-                IntSetting("Most repeats per 10 minutes", settings.repeatBudget, 1..30) { v -> update { it.copy(repeatBudget = v) } }
-                Text(
-                    "New traffic always goes first; repeats only use air time that is otherwise idle. At most " +
-                        "%d repeats in 10 minutes is at most about %d s of air time.".format(settings.repeatBudget, settings.repeatBudget * 2),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+        TeamProfileSection(container, settings)
+    }
+}
+
+@Composable
+private fun RadioPage(
+    settings: Settings,
+    status: RadioStatus,
+    onCalibrate: () -> Unit,
+    onRadioGuide: () -> Unit,
+    update: ((Settings) -> Settings) -> Unit,
+) {
+    val deviceTick = rememberDeviceTick()
+    SettingsColumn(status) {
+        Section("Radio guide", info = HelpText.RADIO_GUIDE) {
+            Text(
+                "Recommended band, channel width and frequencies for 2 m / 70 cm amateur or business band, based on " +
+                    "your terrain, and the radio settings that matter for data.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                settings.radioGuideSummary(),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onRadioGuide) { Text("Open radio guide") }
         }
 
         Section("Modem backend", info = HelpText.BACKEND) {
@@ -185,8 +309,8 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 )
                 IntSetting("KISS TNC port", settings.kissPort, 1..65535) { v -> update { it.copy(kissPort = v) } }
                 Text(
-                    "The TNC (for example Dire Wolf) does the modulation, channel access and PTT. " +
-                        "The audio, PTT, TX and CSMA settings below are not used.",
+                    "The TNC (for example Dire Wolf) does the modulation, channel access and PTT, so the audio, PTT, " +
+                        "transmit and channel access settings are not shown.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -202,15 +326,20 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 when (settings.pttMethod) {
                     PttMethod.SERIAL -> {
                         Spacer(Modifier.height(8.dp))
-                        SerialPttSettings(settings, deviceTick.intValue) { update(it) }
+                        SerialPttSettings(
+                            settings,
+                            deviceTick.intValue,
+                            onUseVox = { update { it.copy(pttMethod = PttMethod.VOX, txDelayMs = maxOf(it.txDelayMs, VOX_MIN_TX_DELAY_MS)) } },
+                        ) { update(it) }
                     }
                     PttMethod.BLUETOOTH -> {
                         Spacer(Modifier.height(8.dp))
                         BluetoothPttSettings(settings) { update(it) }
                     }
                     PttMethod.VOX -> Text(
-                        "The radio keys itself from the audio (or you are testing acoustically). Raise TXDELAY if the " +
-                            "start of packets is cut off.",
+                        "The radio, or an auto-PTT cable such as the BTECH APRS-K1 PRO, keys itself from the audio (or " +
+                            "you are testing acoustically). With an auto-PTT cable, leave the radio's own VOX off. Raise " +
+                            "TXDELAY if the start of packets is cut off.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     PttMethod.NONE -> Text(
@@ -231,6 +360,23 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                 )
             }
 
+            Section("Calibrate levels") {
+                Text(
+                    "Set the receive volume with the level meter and the transmit level with test tones, before going " +
+                        "on the air.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = onCalibrate) { Text("Open calibration") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelPage(settings: Settings, status: RadioStatus, update: ((Settings) -> Settings) -> Unit) {
+    SettingsColumn(status) {
+        if (settings.backend == ModemBackend.SOFT) {
             Section("Error correction (FX.25)", info = HelpText.FX25) {
                 ChoiceSetting(Fx25Mode.entries.map { it to it.label }, settings.fx25) { v -> update { it.copy(fx25 = v) } }
                 Text(
@@ -282,28 +428,54 @@ fun SettingsScreen(container: AppContainer, settings: Settings, status: RadioSta
                     )
                 }
             }
+        } else {
+            Text(
+                "With a KISS TNC, error correction, channel access and time slots are set on the TNC.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
         }
 
+        Section("Store and forward", info = HelpText.STORE_FORWARD) {
+            SwitchSetting(
+                "Send my messages again",
+                "When a station comes into range that missed one of your chat messages or markers, send it once more.",
+                settings.resendOwn,
+            ) { v -> update { it.copy(resendOwn = v) } }
+            SwitchSetting(
+                "Relay for other stations",
+                "Pass on chat, markers and emergency alerts heard from other stations, under your callsign. Use on " +
+                    "one well-placed station only.",
+                settings.relay,
+            ) { v -> update { it.copy(relay = v) } }
+            if (settings.resendOwn || settings.relay) {
+                Spacer(Modifier.height(8.dp))
+                Text("Limits", style = MaterialTheme.typography.labelLarge)
+                IntSetting("Keep messages for (minutes)", settings.repeatHoldMin, 5..240) { v -> update { it.copy(repeatHoldMin = v) } }
+                IntSetting("Repeats per message", settings.repeatMax, 1..10) { v -> update { it.copy(repeatMax = v) } }
+                IntSetting("Minimum gap between repeats (s)", settings.repeatGapS, 30..1800) { v -> update { it.copy(repeatGapS = v) } }
+                IntSetting("Most repeats per 10 minutes", settings.repeatBudget, 1..30) { v -> update { it.copy(repeatBudget = v) } }
+                Text(
+                    "New traffic always goes first; repeats only use air time that is otherwise idle. At most " +
+                        "%d repeats in 10 minutes is at most about %d s of air time.".format(settings.repeatBudget, settings.repeatBudget * 2),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SecurityPage(container: AppContainer, settings: Settings, status: RadioStatus, update: ((Settings) -> Settings) -> Unit) {
+    SettingsColumn(status) {
         Section("Encryption", info = HelpText.ENCRYPTION) {
             WarningCard(
                 "Encryption is NOT permitted on amateur radio frequencies. Leave this Off unless you are operating " +
-                    "under a Part 90 (business band) licence that allows it.",
+                    "under a Part 90 (business band) license that allows it.",
             )
             ChoiceSetting(EncryptionMode.entries.map { it to it.label }, settings.encryption) { v -> update { it.copy(encryption = v) } }
             EncryptionDetails(container, settings) { transform -> update(transform) }
         }
-
-        TeamProfileSection(container, settings)
-
-        Section("Setup guide") {
-            Text(
-                "Walks through permissions and the settings your radio needs, one step at a time.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { update { it.copy(onboardingDone = false) } }) { Text("Run the setup guide again") }
-        }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -352,11 +524,23 @@ internal fun AudioDeviceSettings(settings: Settings, deviceTick: MutableIntState
     )
 }
 
-/** USB serial adapter, control line and polarity. Shared by Settings and the setup guide. */
+/** Shortest TXDELAY set when switching to VOX: the radio or cable needs time to key before data starts. */
+internal const val VOX_MIN_TX_DELAY_MS = 500
+
+/**
+ * USB serial adapter, control line and polarity. Shared by Settings and the setup guide.
+ * [onUseVox] is offered when only a USB sound card is attached, which usually means an auto-PTT cable.
+ */
 @Composable
-internal fun SerialPttSettings(settings: Settings, deviceTick: Int, update: ((Settings) -> Settings) -> Unit) {
+internal fun SerialPttSettings(
+    settings: Settings,
+    deviceTick: Int,
+    onUseVox: () -> Unit,
+    update: ((Settings) -> Settings) -> Unit,
+) {
     val context = LocalContext.current
     val devices = remember(deviceTick) { SerialDevices.list(context) }
+    val usbAudio = remember(deviceTick) { AudioDevices.hasUsbAudio(context) }
     Text("USB serial adapter", style = MaterialTheme.typography.labelLarge)
     val choices = buildList {
         add("" to "First adapter found")
@@ -368,6 +552,16 @@ internal fun SerialPttSettings(settings: Settings, deviceTick: Int, update: ((Se
     ChoiceSetting(choices, settings.pttDevice) { v -> update { it.copy(pttDevice = v) } }
     if (devices.isEmpty()) {
         Text("No USB serial adapter detected.", style = MaterialTheme.typography.bodySmall, color = WarnAmber)
+        if (usbAudio) {
+            // A USB sound card with no serial port is most likely a cable that keys the radio from the audio.
+            Text(
+                "A USB sound card is connected, but it has no serial port to key the radio with. If it is a cable " +
+                    "that keys the radio from the audio itself, such as the BTECH APRS-K1 PRO, use VOX instead " +
+                    "(TXDELAY is raised to at least $VOX_MIN_TX_DELAY_MS ms) and leave the radio's own VOX off.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(onClick = onUseVox) { Text("Use VOX instead") }
+        }
     }
     devices.filter { !it.hasPermission }.forEach { d ->
         OutlinedButton(onClick = { SerialDevices.requestPermission(context, d.device) }) {
@@ -563,11 +757,26 @@ private fun EncryptionDetails(container: AppContainer, settings: Settings, updat
         Text("Cipher", style = MaterialTheme.typography.labelLarge)
         ChoiceSetting(CipherChoice.entries.map { it to it.label }, settings.cipher) { v -> update { it.copy(cipher = v) } }
     }
+    Spacer(Modifier.height(8.dp))
+    SwitchSetting(
+        "Encrypt my callsign too",
+        "Send every packet with the shared placeholder ${Gateway.HIDDEN_SOURCE} in the radio header and your " +
+            "callsign inside the encrypted part, so listeners without the key cannot tell who is transmitting. " +
+            "Older TAKwave versions cannot read these packets, so update every station first.",
+        settings.hideCallsign,
+    ) { v -> update { it.copy(hideCallsign = v) } }
+    if (settings.hideCallsign) {
+        WarningCard(
+            "Your callsign no longer goes out in the clear, so these packets do not identify your station. " +
+                "Identify it some other way as your license requires (for example a periodic clear voice or " +
+                "Morse ID), and check that your license allows encrypted station identification.",
+        )
+    }
     Text(
         when (mode) {
-            EncryptionMode.ECIES_TEAM -> "Each packet is encrypted to the team key with a one-time key (ECIES, AES-256-GCM). Adds 48 to 49 bytes per packet."
-            else -> "Adds 28 bytes per packet."
-        } + " Your callsign is still sent in the clear; only the message content is encrypted. " +
+            EncryptionMode.ECIES_TEAM -> "Each packet is encrypted to the team key with a one-time key (ECIES, AES-256-GCM). Adds 48 to 49 bytes per packet"
+            else -> "Adds 28 bytes per packet"
+        } + (if (settings.hideCallsign) ", plus up to 8 for the callsign. " else ". Your callsign is still sent in the clear; only the message content is encrypted. ") +
             "RSA keys are not supported: an RSA ciphertext does not fit in a radio packet.",
         style = MaterialTheme.typography.bodySmall,
     )
@@ -612,22 +821,30 @@ internal fun TextSetting(
 }
 
 @Composable
-internal fun IntSetting(label: String, value: Int, range: IntRange, onChange: (Int) -> Unit) {
+internal fun IntSetting(
+    label: String,
+    value: Int,
+    range: IntRange,
+    /** Returns a reason when an in-range value is still not allowed. */
+    reject: (Int) -> String? = { null },
+    onChange: (Int) -> Unit,
+) {
     var text by remember { mutableStateOf(value.toString()) }
     val parsed = text.toIntOrNull()
-    val valid = parsed != null && parsed in range
+    val rejection = parsed?.takeIf { it in range }?.let(reject)
+    val valid = parsed != null && parsed in range && rejection == null
     OutlinedTextField(
         value = text,
         onValueChange = { new ->
             text = new.filter { it.isDigit() }.take(6)
             val v = text.toIntOrNull()
             // Only valid values are stored; an out-of-range entry leaves the old setting in place.
-            if (v != null && v in range) onChange(v)
+            if (v != null && v in range && reject(v) == null) onChange(v)
         },
         label = { Text(label) },
         singleLine = true,
         isError = !valid,
-        supportingText = if (valid) null else ({ Text("Enter ${range.first} to ${range.last}") }),
+        supportingText = if (valid) null else ({ Text(rejection ?: "Enter ${range.first} to ${range.last}") }),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
     )

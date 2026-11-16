@@ -46,7 +46,7 @@ object BluetoothDevices {
  *
  * The unkey command is sent as soon as the link opens, after every transmission and on close.
  * If the link drops, [onLost] is called so the engine stops transmitting. A command cannot reach
- * the radio over a dead link, so the radio's own time-out timer is the last line of defence.
+ * the radio over a dead link, so the radio's own time-out timer is the last line of defense.
  */
 class BluetoothPtt private constructor(
     private val socket: BluetoothSocket,

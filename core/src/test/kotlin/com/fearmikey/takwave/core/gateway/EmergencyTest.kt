@@ -118,7 +118,7 @@ class EmergencyTest {
     }
 
     @Test
-    fun anActiveAlertIsRepeatedUntilCancelled() {
+    fun anActiveAlertIsRepeatedUntilCanceled() {
         assertTrue(a.onClientEvent(golden("emergency_911_atak.xml")).acceptedForRf)
         val first = drain(a).single()
         assertNotNull(b.onRfFrame(first.frame).xml)

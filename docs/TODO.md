@@ -1,7 +1,7 @@
 # TODO: unfinished and unverified
 
 Nothing in this list is silently stubbed. Where a path is not implemented, the app refuses
-with a message in the UI or the Log tab, as noted.
+with a message in the UI or the log, as noted.
 
 ## Not verified on real hardware
 
@@ -16,7 +16,7 @@ has been run end to end.
       against ATAK-style samples written from the documented schema, not live captures).
 - [ ] Digirig serial PTT (RTS) and USB audio device routing on a real phone.
 - [ ] Bluetooth serial PTT against a real radio or adapter: connect, key/unkey presets, and
-      behaviour when the link drops mid-transmission.
+      behavior when the link drops mid-transmission.
 - [ ] Store and forward with three real stations, including a relay: re-send when a station
       comes into range, no duplicate messages in ATAK, and how much air time it uses on a busy
       channel.
@@ -45,7 +45,7 @@ has been run end to end.
 - [ ] X25519 keys and ChaCha20-Poly1305 on older Android versions. Where the platform lacks
       them, key import or gateway start fails with "this Android version does not support the
       selected algorithm". EC P-256 with AES-GCM works everywhere.
-- [ ] R8 release build behaviour at runtime (it builds; it has not been run).
+- [ ] R8 release build behavior at runtime (it builds; it has not been run).
 - [ ] Reproducible build: settings are in place but two independent builds have not been compared.
 
 ## Not implemented
@@ -68,8 +68,8 @@ has been run end to end.
       that missed it is heard, but nothing confirms that it arrived.
 - [ ] **Multi-hop relaying and AX.25 digipeating.** A relay passes a message on once; relayed
       packets are never relayed again, and digipeater paths are never used.
-- [ ] **Alert acknowledgement.** Nothing on the air confirms that an alert reached anyone; the
-      author keeps repeating it until it is cancelled.
+- [ ] **Alert acknowledgment.** Nothing on the air confirms that an alert reached anyone; the
+      author keeps repeating it until it is canceled.
 - [ ] **Scanning profile QR codes inside TAKwave.** Left to the camera app or a QR reader.
 - [ ] **Shapes, routes, files, custom icon sets.** Only points are carried. Markers that use
       a custom icon set arrive with the default icon for their type.

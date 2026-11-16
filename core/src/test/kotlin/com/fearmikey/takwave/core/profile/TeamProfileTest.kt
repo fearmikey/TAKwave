@@ -15,7 +15,7 @@ class TeamProfileTest {
         slotted = true, slotLengthMs = 3000, slotCount = 8,
         slotAssignments = mapOf("N0AAA" to 1, "N0BBB-7" to 2),
         resendOwn = true, repeatHoldMin = 30, repeatMax = 3, repeatGapS = 120, repeatBudget = 6,
-        encryption = "OFF", cipher = "AES_GCM", fx25CheckBytes = 16,
+        encryption = "OFF", cipher = "AES_GCM", hideCallsign = false, fx25CheckBytes = 16,
     )
 
     private fun refused(text: String): String {

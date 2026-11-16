@@ -1,0 +1,6 @@
+• Local TAK server moved to port 8099 (ATAK uses 8087 itself). Delete the old TAKwave server in ATAK and re-import the data package
+• Fixed "connection refused" from ATAK with LAN clients off
+• Radio guide: suggested band, channel width and radio settings
+• Optional encrypted callsign (Part 90 only)
+• Simpler navigation and grouped settings
+• Hint for auto-PTT cables without a serial port

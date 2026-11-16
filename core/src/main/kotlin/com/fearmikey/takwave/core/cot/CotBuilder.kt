@@ -16,7 +16,7 @@ import java.util.Locale
 /**
  * Rebuilds CoT XML for messages received from RF. The element layout follows what ATAK-CIV
  * itself emits, so the events render the same as ones that arrived over a network.
- * Every event gets a `<__takwave rx="1"/>` detail so it can be recognised if it comes back.
+ * Every event gets a `<__takwave rx="1"/>` detail so it can be recognized if it comes back.
  */
 object CotBuilder {
     const val DEFAULT_STALE_MS = 5 * 60 * 1000L

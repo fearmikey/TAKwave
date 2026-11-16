@@ -130,7 +130,7 @@ fun Section(title: String, modifier: Modifier = Modifier, info: String? = null, 
     }
 }
 
-/** Card with an attention colour, for warnings the operator must not miss. */
+/** Card with an attention color, for warnings the operator must not miss. */
 @Composable
 fun WarningCard(text: String, modifier: Modifier = Modifier) {
     Card(
@@ -145,8 +145,8 @@ fun WarningCard(text: String, modifier: Modifier = Modifier) {
 }
 
 /**
- * Audio input meter. The bar shows the peak level; its colour tells the operator whether the
- * receive volume is too low (grey), usable (green) or clipping (red).
+ * Audio input meter. The bar shows the peak level; its color tells the operator whether the
+ * receive volume is too low (gray), usable (green) or clipping (red).
  */
 @Composable
 fun LevelMeter(rms: Float, peak: Float, modifier: Modifier = Modifier) {

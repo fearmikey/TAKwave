@@ -39,7 +39,8 @@ class CotServer(
     /** Binds and starts accepting. Throws [IOException] when the port cannot be bound. */
     @Throws(IOException::class)
     fun start() {
-        val bind = if (allowLan) InetAddress.getByName("0.0.0.0") else InetAddress.getLoopbackAddress()
+        // Not InetAddress.getLoopbackAddress(): on Android that is ::1, and ATAK connects to 127.0.0.1.
+        val bind = InetAddress.getByName(if (allowLan) "0.0.0.0" else "127.0.0.1")
         val ss = ServerSocket()
         ss.reuseAddress = true
         ss.bind(InetSocketAddress(bind, port), 8)

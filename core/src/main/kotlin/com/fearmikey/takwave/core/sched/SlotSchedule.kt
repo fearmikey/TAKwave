@@ -11,7 +11,7 @@ import com.fearmikey.takwave.core.ax25.Crc16
  * slots are without exchanging anything over the air. A station only starts transmitting inside
  * its own slot, and only if the transmission will finish [guardMs] before the slot ends. The
  * guard absorbs clock error between stations: with the default 250 ms, two clocks may disagree
- * by up to a quarter of a second before neighbouring slots can touch.
+ * by up to a quarter of a second before neighboring slots can touch.
  *
  * Carrier sensing still applies inside the slot, so a station whose clock is wrong, or one that
  * is not using slots at all, is deferred to rather than transmitted over.

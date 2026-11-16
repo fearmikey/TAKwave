@@ -41,7 +41,7 @@ data class RadioStatus(
     val warnings: List<String> = emptyList(),
     /** Emergency alerts raised by a local TAK client that this station is sending. */
     val ownAlerts: List<EmergencyMessage> = emptyList(),
-    /** Emergency alerts heard on the air and not cancelled. */
+    /** Emergency alerts heard on the air and not canceled. */
     val heardAlerts: List<HeardAlert> = emptyList(),
     /** Channel statistics over the last 10 minutes; null while stopped. */
     val health: ChannelHealth? = null,

@@ -353,7 +353,7 @@ object KeyLoader {
                 // Wrong algorithm for this key, or not available on this platform: try the next.
             }
         }
-        throw IllegalArgumentException("unrecognised key type; supported: EC P-256 and X25519 (X25519 needs a recent Android version)")
+        throw IllegalArgumentException("unrecognized key type; supported: EC P-256 and X25519 (X25519 needs a recent Android version)")
     }
 
     private fun rejectUnusable(key: java.security.Key) {

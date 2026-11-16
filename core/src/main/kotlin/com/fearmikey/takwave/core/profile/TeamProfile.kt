@@ -39,6 +39,8 @@ data class TeamProfile(
     /** Encryption mode name as the app stores it (for example `OFF`, `PASSPHRASE`). Never key material. */
     val encryption: String? = null,
     val cipher: String? = null,
+    /** Also encrypt the callsign (hidden-source packets) while encryption is on. */
+    val hideCallsign: Boolean? = null,
     /** FX.25 check bytes when transmitting: 0 (off), 16, 32 or 64. */
     val fx25CheckBytes: Int? = null,
 ) {
@@ -72,6 +74,7 @@ data class TeamProfile(
         repeatBudget?.let { p += "budget" to it.toString() }
         encryption?.let { p += "enc" to it }
         cipher?.let { p += "cipher" to it }
+        hideCallsign?.let { p += "hide" to bool(it) }
         fx25CheckBytes?.let { p += "fx25" to it.toString() }
         return PREFIX + p.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, "UTF-8")}" }
     }
@@ -175,6 +178,7 @@ data class TeamProfile(
                 repeatBudget = int("budget", REPEAT_BUDGET),
                 encryption = identifier("enc"),
                 cipher = identifier("cipher"),
+                hideCallsign = flag("hide"),
                 fx25CheckBytes = fx25,
             )
         }

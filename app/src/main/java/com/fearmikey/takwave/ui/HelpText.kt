@@ -22,13 +22,13 @@ object HelpText {
     const val BATTERY =
         "Android puts apps to sleep when the screen is off to save battery. For TAKwave that means missed packets " +
             "and late position reports.\n\n" +
-            "Allowing it to ignore battery optimisation keeps the gateway running in your pocket. It does use more " +
+            "Allowing it to ignore battery optimization keeps the gateway running in your pocket. It does use more " +
             "battery while the gateway is started; nothing runs when it is stopped."
 
     const val CALLSIGN =
         "Your callsign is your station identification. It is sent in the clear in every packet, and TAKwave refuses " +
             "to transmit without one.\n\n" +
-            "Use the callsign from your licence: 1 to 6 letters and digits.\n\n" +
+            "Use the callsign from your license: 1 to 6 letters and digits.\n\n" +
             "The SSID (0 to 15) tells apart several stations that share one callsign, for example your handheld (7) " +
             "and your vehicle (9). If you only run one station, leave it at 0."
 
@@ -38,7 +38,8 @@ object HelpText {
             "• USB interface: a box such as a Digirig that is a USB sound card and keys the radio through a serial " +
             "control line. The most reliable choice.\n\n" +
             "• Audio cable with VOX: the radio keys itself when it hears audio. Simple, but the start of a packet " +
-            "can be cut off.\n\n" +
+            "can be cut off. Auto-PTT cables such as the BTECH APRS-K1 PRO belong here too: they are a USB sound " +
+            "card that keys the radio when TAKwave plays audio, so the radio's own VOX stays off.\n\n" +
             "• Bluetooth serial PTT: audio still goes through a cable or USB sound card, but the radio is keyed by " +
             "a command sent over a Bluetooth serial link, for example Bluetooth CAT control.\n\n" +
             "• External KISS TNC: a separate modem (hardware, or software such as Dire Wolf) does everything; " +
@@ -65,7 +66,9 @@ object HelpText {
             "Serial (RTS/DTR): a control line on a USB serial adapter closes the radio's PTT contact. Used by the " +
             "Digirig and most USB interfaces.\n\n" +
             "Bluetooth serial: a command is sent to the radio or adapter over a Bluetooth serial link.\n\n" +
-            "VOX: the radio keys itself when it hears audio. Turn VOX on in the radio's menu.\n\n" +
+            "VOX: the radio keys itself when it hears audio. Turn VOX on in the radio's menu. Also use VOX for " +
+            "auto-PTT cables such as the BTECH APRS-K1 PRO, which key the radio from the audio and have no serial " +
+            "port; with those, leave the radio's VOX off.\n\n" +
             "None: nothing is keyed. Only useful for tests.\n\n" +
             "Whatever the method, TAKwave releases PTT after every transmission and a watchdog forces it off if " +
             "a transmission runs too long."
@@ -77,7 +80,9 @@ object HelpText {
             "use DTR.\n\n" +
             "Invert polarity: leave off unless your radio transmits all the time and stops when TAKwave tries to " +
             "send; then the interface keys on the opposite level.\n\n" +
-            "Turn the radio's own VOX off when using serial PTT."
+            "Turn the radio's own VOX off when using serial PTT.\n\n" +
+            "If no adapter shows up but the interface works as USB audio, it has no serial port: it is probably an " +
+            "auto-PTT cable such as the BTECH APRS-K1 PRO. Choose VOX instead and leave the radio's own VOX off."
 
     const val BLUETOOTH_PTT =
         "TAKwave connects to a Bluetooth device that offers a serial port (SPP) and sends one command to start " +
@@ -104,12 +109,14 @@ object HelpText {
             "packets; lower it to save air time.\n\n" +
             "TXTAIL keeps the transmitter keyed for a moment after the data so the end of the packet is not cut off.\n\n" +
             "TX audio level sets how loud the tones are. Too loud distorts and is the most common reason packets " +
-            "do not decode. Fine-tune it later on the Calibrate tab while listening on a second radio.\n\n" +
+            "do not decode. Fine-tune it later under Calibrate levels while listening on a second radio.\n\n" +
             "TX timeout is a safety limit: the transmitter is forced off if one transmission lasts longer."
 
     const val TAK_SERVER =
         "ATAK connects to TAKwave as if it were a TAK server running on this phone. The port must match the " +
-            "one in ATAK; the exported data package sets it for you.\n\n" +
+            "one in ATAK; the exported data package sets it for you. After changing it, export the data package " +
+            "again and remove the old TAKwave server in ATAK. Port 8087 is not allowed: ATAK listens there " +
+            "itself and would end up connected to its own input.\n\n" +
             "\"Allow LAN clients\" lets a TAK client on another device connect, for example over this phone's " +
             "hotspot. There is no password, so only turn it on for a network you control."
 
@@ -145,7 +152,7 @@ object HelpText {
             "The limits keep repeats from crowding out new traffic. Each chat message takes one to two seconds of " +
             "air time, so keep the repeats per 10 minutes low on a busy channel. New messages always go first.\n\n" +
             "Every relayed packet carries your callsign as the station identification. Check that automatic " +
-            "relaying is allowed by the rules for your licence and band before turning it on."
+            "relaying is allowed by the rules for your license and band before turning it on."
 
     const val FX25 =
         "FX.25 adds error-correction bytes to each packet, so a packet that arrives with a few damaged bytes " +
@@ -183,14 +190,29 @@ object HelpText {
 
     const val EMERGENCY =
         "When someone raises an alert in ATAK (911, Ring The Bell, In Contact), TAKwave sends it ahead of " +
-            "all other traffic and repeats it every 30 seconds with the latest position until it is cancelled " +
+            "all other traffic and repeats it every 30 seconds with the latest position until it is canceled " +
             "in ATAK. The cancel is sent three times.\n\n" +
             "Alerts heard from other stations appear here and in ATAK. Relay stations pass alerts on like chat."
 
+    const val RADIO_GUIDE =
+        "The radio guide suggests a band, channel width and frequencies for your license and terrain, and the " +
+            "radio settings that matter for data. TAKwave cannot change the radio itself: set the channel on the " +
+            "radio or in its programming software.\n\n" +
+            "Amateur (ham): 2 m and 70 cm, under an amateur license. Every packet carries your callsign. Encryption " +
+            "is not permitted.\n\n" +
+            "Business band: VHF and UHF channels under an FCC Part 90 license. Use only the frequencies and " +
+            "emissions on your license. Channels must be 12.5 kHz (narrowband).\n\n" +
+            "Channel width must match on every radio in the team. A mismatch distorts or weakens the audio, and " +
+            "packets fail to decode.\n\n" +
+            "The frequency lists follow US rules and the ARRL band plan. Local band plans and frequency " +
+            "coordinators come first, and other countries have their own rules."
+
     const val ENCRYPTION =
         "Encryption hides the content of your messages from anyone without the key. Your callsign is still sent " +
-            "in the clear.\n\n" +
-            "It is NOT permitted on amateur radio frequencies. Only turn it on if you operate under a licence " +
+            "in the clear unless you also turn on 'Encrypt my callsign too'. Then every station's packets carry the " +
+            "same placeholder in the radio header and the real callsign travels inside the encrypted part, so " +
+            "your station must identify itself some other way.\n\n" +
+            "It is NOT permitted on amateur radio frequencies. Only turn it on if you operate under a license " +
             "that allows it, such as Part 90 business band.\n\n" +
             "Every station must use the same mode and keys. If encryption is on but the key is missing, TAKwave " +
             "stops transmitting instead of sending in the clear."

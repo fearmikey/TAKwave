@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.fearmikey.takwave.core.codec
 
-/** The 14 ATAK team colours. The ordinal is the on-air code; never reorder, only append. */
+/** The 14 ATAK team colors. The ordinal is the on-air code; never reorder, only append. */
 enum class Team(val cotName: String) {
     UNKNOWN(""),
     WHITE("White"),
@@ -43,7 +43,7 @@ enum class Role(val cotName: String) {
     }
 }
 
-/** A message that can travel over the air. Numeric fields hold the exact on-air quantisation. */
+/** A message that can travel over the air. Numeric fields hold the exact on-air quantization. */
 sealed interface TakMessage {
     /** Identity used for loop prevention and queue replacement. */
     val key: String
@@ -54,8 +54,8 @@ sealed interface TakMessage {
  *
  * @param latE7 latitude in degrees x 1e7
  * @param lonE7 longitude in degrees x 1e7
- * @param haeM height above ellipsoid in metres, null when unknown
- * @param ceM circular error in metres, null when unknown
+ * @param haeM height above ellipsoid in meters, null when unknown
+ * @param ceM circular error in meters, null when unknown
  * @param speedDms ground speed in units of 0.1 m/s, null when unknown
  * @param courseDeg course in whole degrees 0-359, null when unknown
  * @param battery percent 0-100, null when unknown
@@ -164,6 +164,8 @@ sealed interface DecodeResult {
      * @param hops how many times the packet was relayed by other stations; 0 when heard from its author
      * @param ageS seconds since the author first sent the message; 0 for a first transmission
      * @param seq the sender's position report counter (PROTOCOL.md 4.4), or null when absent
+     * @param hiddenSource the sending station's address from inside the ciphertext, for a
+     *   hidden-source packet (PROTOCOL.md 6); null when the AX.25 source is the real one
      */
     data class Ok(
         val message: TakMessage,
@@ -171,6 +173,7 @@ sealed interface DecodeResult {
         val hops: Int = 0,
         val ageS: Int = 0,
         val seq: Int? = null,
+        val hiddenSource: com.fearmikey.takwave.core.ax25.Ax25Address? = null,
     ) : DecodeResult
     data class Error(val reason: String) : DecodeResult
 }

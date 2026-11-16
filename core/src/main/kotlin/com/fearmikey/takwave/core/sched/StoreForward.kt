@@ -52,7 +52,7 @@ private fun repeatRank(m: TakMessage): Int = when (m) {
 
 /**
  * Saves held messages in their clear over-air encoding, which every message type already has,
- * so the file format follows the protocol without a second serialiser to keep in step.
+ * so the file format follows the protocol without a second serializer to keep in step.
  */
 internal object HeldMessageIo {
     private val codec = PacketCodec()
@@ -174,7 +174,7 @@ class SeenCache(private val ttlMs: Long = 3 * 60 * 60_000L, private val maxEntri
  *    short random delay and again when a station is heard that was not in range before.
  *
  * Every transmission is subject to the limits in [RepeatConfig]. Hearing anyone else send the
- * same message cancels a pending repeat. The caller serialises access (the Gateway lock).
+ * same message cancels a pending repeat. The caller serializes access (the Gateway lock).
  */
 class RepeatStore(private val config: RepeatConfig = RepeatConfig(), private val random: java.util.Random = java.util.Random()) {
     /**
@@ -347,7 +347,7 @@ class RepeatStore(private val config: RepeatConfig = RepeatConfig(), private val
     /**
      * Takes back what was held before a restart, under the current configuration: kinds that are
      * now switched off, messages past the hold time and messages already repeated enough are
-     * dropped, and the capacity applies. Returns how many messages are held afterwards.
+     * dropped, and the capacity applies. Returns how many messages are held afterward.
      */
     internal fun restore(saved: Saved, nowMs: Long): Int {
         for (s in saved.entries) {

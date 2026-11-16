@@ -20,7 +20,7 @@ object Fir {
         return FloatArray(taps) { (h[it] / sum).toFloat() }
     }
 
-    /** Band-pass with roughly unity gain at the centre of the passband. */
+    /** Band-pass with roughly unity gain at the center of the passband. */
     fun bandPass(taps: Int, lowHz: Double, highHz: Double, sampleRate: Int): FloatArray {
         val f1 = lowHz / sampleRate
         val f2 = highHz / sampleRate
@@ -29,12 +29,12 @@ object Fir {
             val t = it - mid
             (2.0 * f2 * sinc(2.0 * f2 * t) - 2.0 * f1 * sinc(2.0 * f1 * t)) * hamming(it, taps)
         }
-        val fCentre = (f1 + f2) / 2.0
+        val fCenter = (f1 + f2) / 2.0
         var re = 0.0
         var im = 0.0
         for (i in 0 until taps) {
-            re += h[i] * cos(2.0 * PI * fCentre * (i - mid))
-            im += h[i] * sin(2.0 * PI * fCentre * (i - mid))
+            re += h[i] * cos(2.0 * PI * fCenter * (i - mid))
+            im += h[i] * sin(2.0 * PI * fCenter * (i - mid))
         }
         val gain = kotlin.math.sqrt(re * re + im * im)
         return FloatArray(taps) { (h[it] / gain).toFloat() }

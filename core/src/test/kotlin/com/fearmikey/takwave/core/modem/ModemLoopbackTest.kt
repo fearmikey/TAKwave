@@ -137,7 +137,7 @@ class ModemLoopbackTest {
         val frames = randomFrames(200, 13)
         val deEmph = deEmphasize(transmit(frames))
         val rate = decodeRate(frames, addNoise(deEmph, 25.0, 8))
-        println("de-emphasised: %.1f%% decoded".format(rate * 100))
+        println("de-emphasized: %.1f%% decoded".format(rate * 100))
         assertTrue("decode rate $rate with de-emphasis", rate >= 0.99)
 
         val quiet = transmit(frames, amp = 0.01)

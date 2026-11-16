@@ -24,12 +24,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.fearmikey.takwave.AppContainer
 import com.fearmikey.takwave.core.io.RfState
+import com.fearmikey.takwave.core.radio.ChannelWidth
+import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.engine.CalibrationTone
 import com.fearmikey.takwave.engine.RadioStatus
 import kotlin.math.roundToInt
 
 @Composable
-fun CalibrateScreen(container: AppContainer, status: RadioStatus) {
+fun CalibrateScreen(container: AppContainer, settings: Settings, status: RadioStatus) {
+    val width = settings.effectiveChannelWidth
+    val widthName = if (width == ChannelWidth.WIDE) "wide" else "narrow"
     val maxSeconds = (status.txTimeoutS - 1).coerceAtLeast(1)
     var seconds by rememberSaveable { mutableIntStateOf(5) }
     val duration = seconds.coerceIn(1, maxSeconds)
@@ -44,7 +48,7 @@ fun CalibrateScreen(container: AppContainer, status: RadioStatus) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         if (!status.running) {
-            WarningCard("Start the gateway on the Status tab to use calibration.")
+            WarningCard("Start the gateway on the Status screen to use calibration.")
         } else if (!status.softModem) {
             WarningCard("Calibration tones and the level meter need the soft modem. With a KISS TNC, set levels on the TNC.")
         }
@@ -64,8 +68,9 @@ fun CalibrateScreen(container: AppContainer, status: RadioStatus) {
 
         Section("Transmit tones") {
             Text(
-                "Keys the radio and sends a steady tone so you can set the audio level (FM deviation of roughly 3 kHz " +
-                    "on a 5 kHz channel). Adjust \"TX audio level\" in Settings, or the interface's level control, until " +
+                "Keys the radio and sends a steady tone so you can set the audio level (FM deviation of roughly " +
+                    "${width.deviationText()} on a $widthName ${width.spacingKhz} kHz channel, as chosen in the radio " +
+                    "guide). Adjust \"TX audio level\" in Settings, or the interface's level control, until " +
                     "the signal sounds as loud as a normal voice transmission on a second receiver, then back off slightly. " +
                     "Both tones should sound equally loud.",
                 style = MaterialTheme.typography.bodySmall,
@@ -108,7 +113,7 @@ fun CalibrateScreen(container: AppContainer, status: RadioStatus) {
             OutlinedButton(enabled = status.running, onClick = { container.engine?.sendTestPli() }) {
                 Text("Send test PLI")
             }
-            Text("Results appear on the Log tab.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            Text("Results appear in the log (list icon, top bar).", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Top bar action: Settings, a gear (ring, hub and eight teeth). Tinted by the Compose Icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M5.5,12a6.5,6.5 0,1 0,13 0a6.5,6.5 0,1 0,-13 0z M9.5,12a2.5,2.5 0,1 0,5 0a2.5,2.5 0,1 0,-5 0z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" />
+    <path
+        android:pathData="M19,12H22 M12,5V2 M5,12H2 M12,19V22 M16.95,7.05L19.07,4.93 M7.05,7.05L4.93,4.93 M7.05,16.95L4.93,19.07 M16.95,16.95L19.07,19.07"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.5" />
+</vector>

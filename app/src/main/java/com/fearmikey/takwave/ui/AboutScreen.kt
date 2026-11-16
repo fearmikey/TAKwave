@@ -25,7 +25,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 private const val DEVELOPER = "fearmikey"
-private const val DEVELOPER_URL = "https://github.com/fearmikey"
 private const val REPO_URL = "https://github.com/fearmikey/TAKwave"
 private const val ISSUES_URL = "https://github.com/fearmikey/TAKwave/issues"
 private const val COFFEE_URL = "https://buymeacoffee.com/XimW7nXI1j"
@@ -48,19 +47,13 @@ fun AboutScreen() {
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         Section("TAKwave") {
-            Text("Version $version", style = MaterialTheme.typography.bodyMedium)
+            Text("Version $version, by $DEVELOPER", style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(8.dp))
             Text(
                 "Carries TAK position reports, chat, markers and emergency alerts over analog VHF/UHF radios. " +
                     "Free and open source under the GNU GPL v3 or later: no ads, no tracking, no accounts.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-        }
-
-        Section("Developer") {
-            Text(DEVELOPER, style = MaterialTheme.typography.bodyLarge)
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { openLink(context, DEVELOPER_URL) }) { Text("GitHub profile") }
         }
 
         Section("Source code") {
@@ -75,7 +68,7 @@ fun AboutScreen() {
         Section("Report a bug") {
             Text(
                 "Open an issue on GitHub. Please include the app version below, your radio interface, and an " +
-                    "exported log (Log tab, Export) if you can. Check the log for anything private before you post it.",
+                    "exported log (list icon in the top bar, Export) if you can. Check the log for anything private before you post it.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(8.dp))

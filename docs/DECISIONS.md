@@ -39,8 +39,8 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
 14. **Common CoT types are a one-byte code** from an append-only table; others are literal.
 15. **PLI carries the sender's base interval** (1 byte, units of 5 s) so receivers can set the
     stale time to three intervals, as the spec asks.
-16. **Markers carry an optional ARGB colour** in addition to the spec's fields, because spot-map
-    markers are identified by colour in ATAK.
+16. **Markers carry an optional ARGB color** in addition to the spec's fields, because spot-map
+    markers are identified by color in ATAK.
 17. **Payload is capped at 256 bytes** (the AX.25 default) so hardware TNCs can carry it. Caps:
     uid 48, callsign 20, room 32, chat text 200 (reduced further when needed to fit).
 18. **Unknown team or role codes decode as "unknown"**; unknown type codes drop the packet.
@@ -112,7 +112,7 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
 ## Encryption
 
 44. **Encryption never silently falls back to clear text.** If the mode is on but the key
-    material is missing or unusable, transmitting is disabled and the Status tab says why.
+    material is missing or unusable, transmitting is disabled and the Status screen says why.
 45. **Cipher suites are identified in the header** (3 bits), so a mismatch is reported as such.
 46. **"Asymmetric" is offered in two forms** that fit a broadcast channel with 256-byte frames:
     static ECDH between two stations (derives a shared key), and ECIES to a team public key
@@ -136,7 +136,7 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
     from the background, so a sticky restart would only crash.
 54. **The microphone service type is added only when the soft modem is selected and the
     permission is granted;** otherwise the service runs as `connectedDevice` only.
-55. **Settings are read when the gateway starts.** The Settings tab offers a restart button.
+55. **Settings are read when the gateway starts.** Every Settings screen offers a restart button while the gateway runs.
 56. **Audio capture prefers the `UNPROCESSED` source,** falling back to `VOICE_RECOGNITION`, to
     keep AGC and noise suppression away from the modem signal.
 57. **Audio devices are remembered by type and product name,** since Android device ids change
@@ -144,7 +144,13 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
 58. **When serial PTT is selected but unavailable, transmitting is disabled** instead of
     playing audio into an unkeyed radio.
 59. **The test PLI uses uid `TAKWAVE-<callsign>`** and the last local position, or 0,0.
-60. **Dark theme only,** and no icon font dependency: navigation is a text tab row.
+60. **Dark theme only,** and no icon font dependency. Status is the home screen; Log, Settings
+    and About open from top bar icons, and every other screen has a back arrow. Settings is a
+    short list of groups (Station & TAK, Radio & audio, Channel, Security), each on its own
+    page. Calibration is occasional setup work, so it opens from Radio & audio or from *Adjust
+    levels* on the Status screen rather than having a place in the main navigation. The icons
+    are vector drawables in the app (`ic_log`, `ic_settings`, `ic_about`, `ic_back`,
+    `ic_chevron`). Navigation is a small back stack in `MainActivity`, not a library.
 61. **At most 8 TAK clients;** a client that stops reading is disconnected once 256 events
     are queued for it.
 
@@ -172,7 +178,7 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
 67. **Command syntax is parsed in `:core`** (`PttCommand`) so it is unit-tested; an invalid
     command disables transmitting rather than sending something else.
 68. **The setup guide writes straight to the settings store** with the same controls as the
-    Settings tab, and is shown until it is finished or skipped (`onboardingDone`). The info
+    Settings screens, and is shown until it is finished or skipped (`onboardingDone`). The info
     icon is drawn in code, keeping the no-icon-font rule (60).
 
 ## Store and forward
@@ -181,7 +187,7 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
     it never puts anyone else's traffic on the air and only triggers when a new station is
     heard. Relaying other stations' traffic is off by default and meant for one well-placed
     station; it is the one deliberate exception to "never retransmit RF traffic" (31, AGENTS.md).
-70. **"Missed it" is inferred from presence, without acknowledgements.** A station counts as
+70. **"Missed it" is inferred from presence, without acknowledgments.** A station counts as
     having had a chance at a message if it was heard within 3 minutes of a transmission of it.
     Hearing someone proves nothing about them hearing us, so this is best effort; acks would
     cost a frame per recipient per message on a 1200 baud channel.
@@ -231,7 +237,7 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
     the relay has heard the author.
 83. **The author's repeats are delivered to ATAK every time**, unlike other repeats, so the alert
     stays fresh; rebuilt alerts are stale after 10 minutes. A cancel is a newer version of its
-    alert, so an old relayed copy can never bring a cancelled alert back (75).
+    alert, so an old relayed copy can never bring a canceled alert back (75).
 84. **An unknown alert kind decodes as Custom** instead of being dropped, unlike unknown CoT
     types (18): showing a slightly wrong alert beats losing one.
 
@@ -285,3 +291,56 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
     were saved (78), as are kinds now switched off, messages past the hold time and messages
     already repeated enough. The repeat budget counts transmissions from before the restart. A
     damaged file changes nothing.
+
+## Hidden callsign
+
+98. **The callsign moves inside the ciphertext; the AX.25 header carries `TAKWV-15`.** The
+    placeholder is the same for every station, so the header says nothing about who sent a
+    frame, while the destination stays `TAKWV` so receivers and TNCs still find TAKwave traffic.
+    A per-frame random source was considered and rejected: it hides nothing more and makes logs
+    harder to read. The inner address is authenticated by the AEAD tag; the outer one never was.
+99. **Hidden-source packets are protocol version 1; everything else stays version 0.** Putting
+    the address in front of the body changes the position of existing fields (PROTOCOL.md 8,
+    rule 4). A flag bit was not an option: version-0 receivers mask the type byte, would decrypt
+    successfully and could misparse the address as a body. A version they do not implement is
+    dropped cleanly. Senders keep using version 0 when not hiding, so mixed fleets keep working.
+100. **Encrypting stations always keep 8 bytes of a chat free for the address**, hiding or not,
+    so a hiding relay can pass on any encrypted chat with exactly the same text (the rule the
+    3-byte extension reserve already follows).
+101. **Hidden-source traffic is relayed only by a relay that also hides**, so a relay never
+    shows less protection than the author chose. Held messages are dropped on restart when
+    hiding was switched (the saved protection byte is 0 clear, 1 encrypted, 2 hidden; 0 and 1
+    read the same as the boolean older versions wrote, so no state version bump).
+102. **No automatic clear identification.** Sending a periodic clear ID frame would undo the
+    point of the feature; station identification is left to the operator, with a warning in the
+    settings and in the help text.
+
+## TAK server port
+
+103. **The local TAK server defaults to port 8099, and 8087 is refused.** ATAK ships a built-in
+    TCP CoT input on 8087 (TAKwave's default up to 0.3.0). With both on 8087, ATAK could end up
+    connected to its own input, which never answers `t-x-c-t` pings, so ATAK dropped and
+    re-opened the link every ~30 s even with the gateway stopped; or TAKwave could not bind at
+    all, depending on which app started first. A stored 8087 is read as the new default (every
+    settings write stores every field, so a deliberate 8087 cannot be told apart from the old
+    default, and it is broken either way). Users must re-import the data package once.
+
+## Radio guide
+
+104. **The radio guide gives advice and never changes the radio or the gateway.** TAKwave has
+    no CAT control of frequency, so the guide tells the operator what to set. Its choices
+    (service, band, width, terrain) are stored in Settings, but the gateway does not read them.
+    The only TAKwave setting it touches is FX.25, and only when the operator taps the button.
+    Applying FX.25 is safe because receivers always decode it.
+105. **The band plan data lives in `:core` (`radio/RadioGuide.kt`) with unit tests**, like the
+    other protocol and scheduling logic, so the frequency lists are checked: every suggestion is
+    in its band, and none falls on APRS, a calling frequency, MURS, GMRS/FRS, or a non-itinerant
+    or 6 kHz Part 90 channel.
+106. **US rules only.** Business channels are the nationwide itinerant channels from 47 CFR
+    90.35 (footnotes 10 and 17). 151.955 is left out because it is not itinerant, and 151.640
+    because it is limited to 6 kHz. Business band is fixed at 12.5 kHz because of the Part 90
+    narrowbanding rule. Amateur frequencies follow the ARRL band plan. 70 cm has no nationwide
+    packet channel, so the guide names the 445-447 MHz local-option segment and defers to the
+    local coordinator. Other countries' band plans are not modeled, and the screen says so.
+107. **The data deviation target is 60% of the channel's peak deviation** (3 kHz wide, 1.5 kHz
+    narrow). This matches the wide-channel figure the calibration screen already used.

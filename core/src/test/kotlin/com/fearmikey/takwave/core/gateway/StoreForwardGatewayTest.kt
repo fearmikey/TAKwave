@@ -192,6 +192,33 @@ class StoreForwardGatewayTest {
     }
 
     @Test
+    fun hiddenSourceTrafficIsOnlyRelayedByAHidingRelay() {
+        val key = "part 90 fleet key"
+        fun codec() = PacketCodec(PayloadCrypto.fromPassphrase(key.toCharArray()))
+        val sender = Gateway(clock, Ax25Address("WQAA11"), codec(), repeatConfig = RepeatConfig(), random = Random(1), hideSource = true)
+        sender.onClientEvent(golden("chat_all_atak.xml"))
+        val frame = drain(sender).single().frame
+
+        // An encrypting relay that shows its callsign would reveal more than the author chose to: no relay.
+        val openRelay = station("WQRL11", relayOn, codec())
+        assertNotNull(openRelay.onRfFrame(frame).xml)
+        clock.advance(10_000)
+        assertEquals(0, drain(openRelay).size)
+
+        // A hiding relay passes it on, with its own callsign sealed inside.
+        val hidingRelay = Gateway(clock, Ax25Address("WQRL22"), codec(), repeatConfig = relayOn, random = Random(1), hideSource = true)
+        assertNotNull(hidingRelay.onRfFrame(frame).xml)
+        clock.advance(10_000)
+        val item = drain(hidingRelay).single()
+        assertEquals(TxKind.RELAY, item.kind)
+        assertEquals(Gateway.HIDDEN_SOURCE, Ax25Frame.decode(item.frame)!!.source)
+        val heard = station("WQCC33", codec = codec()).onRfFrame(item.frame)
+        assertEquals("WQRL22", heard.source)
+        assertTrue(heard.relayed && heard.hiddenSource)
+        assertEquals("Rally at <CP2> & hold", CotParser.parse(heard.xml!!)!!.remarks)
+    }
+
+    @Test
     fun theLongestChatStillFitsWithTheExtension() {
         val long = ChatMessage(
             "0f8fad5b-d9cb-469f-a165-70867728950e", "ANDROID-589520ccfcd20f01", "NOVA",

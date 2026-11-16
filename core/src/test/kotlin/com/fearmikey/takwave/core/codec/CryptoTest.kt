@@ -51,6 +51,49 @@ class CryptoTest {
         assertFalse(String(tx.encode(chat), Charsets.ISO_8859_1).contains("trailhead"))
     }
 
+    // ---- Hidden source (version 1) ----
+
+    @Test
+    fun hiddenSourceTravelsInsideTheCiphertextInEverySuite() {
+        val call = com.fearmikey.takwave.core.ax25.Ax25Address("KB1ABC", 15)
+        val ec = ecPair()
+        val x = xPair()
+        val suites = listOf(
+            AeadCipher(ByteArray(32) { it.toByte() }),
+            AeadCipher(ByteArray(32) { it.toByte() }, AeadAlgorithm.CHACHA20_POLY1305),
+            EciesCipher(x.public, x.private),
+            EciesCipher(ec.public, ec.private),
+        )
+        val longest = chat.copy(text = "z".repeat(400))
+        for (c in suites) {
+            val codec = PacketCodec(c)
+            for (m in listOf(chat, pli, longest)) {
+                val sealed = codec.encode(m, hops = 1, ageS = 600, hiddenSource = call)
+                assertTrue("${sealed.size} bytes", sealed.size <= Wire.MAX_PAYLOAD)
+                assertEquals(Wire.MAGIC + Wire.VERSION_HIDDEN_SOURCE, sealed[0].toInt() and 0xFF)
+                assertFalse(String(sealed, Charsets.ISO_8859_1).contains("KB1ABC"))
+                val r = codec.decode(sealed) as DecodeResult.Ok
+                assertEquals(call, r.hiddenSource)
+                assertEquals(1 to 600, r.hops to r.ageS)
+                // The text is the same as without a hidden source: room for it is always kept.
+                assertEquals((codec.decode(codec.encode(m)) as DecodeResult.Ok).message, r.message)
+                // The version byte is authenticated: it cannot be flipped back to 0.
+                val downgraded = sealed.copyOf().also { it[0] = (Wire.MAGIC + Wire.VERSION).toByte() }
+                assertTrue(codec.decode(downgraded) is DecodeResult.Error)
+            }
+            assertNull((codec.decode(codec.encode(chat)) as DecodeResult.Ok).hiddenSource)
+        }
+    }
+
+    @Test
+    fun aHiddenSourceIsNeverSentInTheClear() {
+        val call = com.fearmikey.takwave.core.ax25.Ax25Address("KB1ABC")
+        assertThrows(IllegalStateException::class.java) { PacketCodec().encode(chat, hiddenSource = call) }
+        // A clear packet claiming version 1 is refused.
+        val clear = PacketCodec().encode(chat).also { it[0] = (Wire.MAGIC + Wire.VERSION_HIDDEN_SOURCE).toByte() }
+        assertTrue(PacketCodec().decode(clear) is DecodeResult.Error)
+    }
+
     // ---- Symmetric keys ----
 
     @Test
@@ -141,7 +184,7 @@ class CryptoTest {
         assertTrue(reason { KeyLoader.privateKey("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----".toByteArray()) }.contains("not supported"))
         assertTrue(reason { KeyLoader.publicKey("hello".toByteArray()) }.contains("PEM"))
         assertTrue(reason { KeyLoader.publicKey("-----BEGIN PUBLIC KEY-----\n!!!\n-----END PUBLIC KEY-----".toByteArray()) }.contains("damaged"))
-        assertTrue(reason { KeyLoader.publicKey("-----BEGIN PUBLIC KEY-----\nAAAAAAAA\n-----END PUBLIC KEY-----".toByteArray()) }.contains("unrecognised"))
+        assertTrue(reason { KeyLoader.publicKey("-----BEGIN PUBLIC KEY-----\nAAAAAAAA\n-----END PUBLIC KEY-----".toByteArray()) }.contains("unrecognized"))
     }
 
     @Test

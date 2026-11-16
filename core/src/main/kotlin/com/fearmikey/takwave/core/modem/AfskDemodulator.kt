@@ -16,12 +16,12 @@ import kotlin.math.sqrt
  * Signal path: band-pass prefilter, then two quadrature correlators (the input is mixed with
  * local 1200 Hz and 2200 Hz oscillators and low-pass filtered, giving the envelope of each
  * tone). Several "slicers" compare mark against space using different space-tone gains, which
- * covers radios whose audio is de-emphasised, flat, or pre-emphasised. Each slicer has its own
+ * covers radios whose audio is de-emphasized, flat, or pre-emphasized. Each slicer has its own
  * clock-recovery PLL, HDLC deframer and FX.25 receiver; frames found by more than one slicer
  * (or by both the plain and the FX.25 path) are de-duplicated by CRC.
  *
  * The clock recovery is the classic software-TNC digital PLL: a phase accumulator that wraps
- * once per bit and is pulled towards zero at every data transition. The idea of scaling the
+ * once per bit and is pulled toward zero at every data transition. The idea of scaling the
  * accumulator by an "inertia" factor that depends on lock state follows the approach described
  * in the Dire Wolf documentation (WB2OSZ); the code here is an independent implementation.
  */
@@ -206,7 +206,7 @@ class AfskDemodulator(
     }
 
     companion object {
-        /** Space-tone gains of the parallel slicers; above 1 compensates de-emphasised audio. */
+        /** Space-tone gains of the parallel slicers; above 1 compensates de-emphasized audio. */
         val DEFAULT_SPACE_GAINS = floatArrayOf(0.6f, 1.0f, 1.6f, 2.5f, 4.0f)
 
         private const val INERTIA_LOCKED = 0.74f

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package com.fearmikey.takwave.core.codec
 
+import com.fearmikey.takwave.core.ax25.Ax25Address
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
@@ -14,8 +15,17 @@ internal class CodecException(message: String) : Exception(message)
 /** Limits and constants of the over-air format. See docs/PROTOCOL.md. */
 object Wire {
     const val MAGIC = 0x54
+    /** Version of every packet except the hidden-source form. */
     const val VERSION = 0
+    /**
+     * Version 1: an encrypted packet whose sending station address travels inside the ciphertext,
+     * right after the type byte, instead of in the AX.25 header (PROTOCOL.md 6, "Hidden source").
+     * Senders use it only for that; everything else stays version 0 so older receivers keep working.
+     */
+    const val VERSION_HIDDEN_SOURCE = 1
     const val MAX_VERSION = 15
+    /** Largest hidden source address: length byte, up to 6 characters, SSID byte. */
+    const val HIDDEN_SOURCE_MAX_SIZE = 8
 
     const val TYPE_PLI = 1
     const val TYPE_CHAT = 2
@@ -157,14 +167,23 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
     /** Description of the active cipher for the UI, or null when sending in the clear. */
     val cipherDescription: String? get() = crypto?.description
 
+    /** True when this codec seals what it encodes. */
+    val encrypts: Boolean get() = crypto != null
+
     /**
      * @param hops 0 for the station's own traffic; 1 when relaying a message heard from another station.
      * @param ageS for a repeat, seconds since the author first sent the message; null for a first transmission.
      * @param seq the station's position report counter (0-255); only position reports carry it.
      * The extension (PROTOCOL.md 4.4) is appended only when one of these is set.
+     * @param hiddenSource the sending station's address, to be sealed inside the packet (version 1)
+     * because the AX.25 header carries a placeholder instead. Only allowed with a cipher: this
+     * never produces a clear packet when the source is meant to be hidden.
      */
-    fun encode(message: TakMessage, hops: Int = 0, ageS: Int? = null, seq: Int? = null): ByteArray {
-        val overhead = if (crypto != null) crypto.overhead + 1 else 0
+    fun encode(message: TakMessage, hops: Int = 0, ageS: Int? = null, seq: Int? = null, hiddenSource: Ax25Address? = null): ByteArray {
+        check(hiddenSource == null || crypto != null) { "a hidden source needs encryption" }
+        // An encrypting station always keeps room for a hidden source in chats, so a hiding relay
+        // can pass on any encrypted chat with exactly the same text.
+        val overhead = if (crypto != null) crypto.overhead + 1 + Wire.HIDDEN_SOURCE_MAX_SIZE else 0
         val w = ByteWriter()
         val type = when (message) {
             is PliMessage -> { writePli(w, message); Wire.TYPE_PLI }
@@ -183,7 +202,7 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
             if (seq != null) w.u8(seq)
         }
         val body = w.toByteArray()
-        val version = (Wire.MAGIC + Wire.VERSION).toByte()
+        val version = (Wire.MAGIC + if (hiddenSource != null) Wire.VERSION_HIDDEN_SOURCE else Wire.VERSION).toByte()
         if (crypto == null) {
             val out = ByteArray(2 + body.size)
             out[0] = version
@@ -192,10 +211,14 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
             return out
         }
         val header = byteArrayOf(version, (Wire.FLAG_ENCRYPTED or (crypto.suite shl Wire.SUITE_SHIFT)).toByte())
-        val plain = ByteArray(1 + body.size)
-        plain[0] = type.toByte()
-        body.copyInto(plain, 1)
-        return header + crypto.seal(plain, header)
+        val plain = ByteWriter()
+        plain.u8(type)
+        if (hiddenSource != null) {
+            plain.string(hiddenSource.call, 6)
+            plain.u8(hiddenSource.ssid)
+        }
+        plain.bytes(body)
+        return header + crypto.seal(plain.toByteArray(), header)
     }
 
     fun decode(payload: ByteArray): DecodeResult {
@@ -215,11 +238,13 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
         val b0 = payload[0].toInt() and 0xFF
         if (b0 < Wire.MAGIC || b0 > Wire.MAGIC + Wire.MAX_VERSION) return DecodeResult.Error("not a TAKwave packet")
         val version = b0 - Wire.MAGIC
-        if (version != Wire.VERSION) return DecodeResult.Error("unsupported version $version")
+        if (version != Wire.VERSION && version != Wire.VERSION_HIDDEN_SOURCE) return DecodeResult.Error("unsupported version $version")
         val b1 = payload[1].toInt() and 0xFF
         val encrypted = b1 and Wire.FLAG_ENCRYPTED != 0
+        if (version == Wire.VERSION_HIDDEN_SOURCE && !encrypted) return DecodeResult.Error("hidden-source packet that is not encrypted")
         val type: Int
         val reader: ByteReader
+        var hiddenSource: Ax25Address? = null
         if (encrypted) {
             val c = crypto ?: return DecodeResult.Error("encrypted packet but no key configured")
             val suite = (b1 ushr Wire.SUITE_SHIFT) and Wire.SUITE_MASK
@@ -230,6 +255,12 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
             if (plain.isEmpty()) return DecodeResult.Error("too short")
             type = plain[0].toInt() and Wire.TYPE_MASK
             reader = ByteReader(plain, 1)
+            if (version == Wire.VERSION_HIDDEN_SOURCE) {
+                val call = reader.string(6)
+                val ssid = reader.u8()
+                if (!Ax25Address.isValidCall(call) || ssid > 15) throw CodecException("invalid hidden source address")
+                hiddenSource = Ax25Address(call, ssid)
+            }
         } else {
             type = b1 and Wire.TYPE_MASK
             reader = ByteReader(payload, 2)
@@ -251,7 +282,7 @@ class PacketCodec(private val crypto: PayloadCipher? = null) {
             if (ext and Wire.EXT_AGE != 0) ageS = reader.u16()
             if (ext and Wire.EXT_SEQ != 0) seq = reader.u8()
         }
-        return DecodeResult.Ok(message, encrypted, hops, ageS, seq)
+        return DecodeResult.Ok(message, encrypted, hops, ageS, seq, hiddenSource)
     }
 
     // ---- PLI ----

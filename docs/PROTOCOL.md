@@ -1,6 +1,7 @@
 # TAKwave over-air protocol
 
-Protocol version: **0**
+Protocol version: **1** (version 1 is used only for hidden-source packets, section 6; all other
+packets are version 0)
 
 This document defines everything TAKwave puts on the air. The reference implementation is
 `core/src/main/kotlin/com/fearmikey/takwave/core/codec/PacketCodec.kt`.
@@ -51,10 +52,13 @@ The frame inside must then pass the normal FCS check.
 | Field       | Value |
 |-------------|-------|
 | Destination | `TAKWV` (SSID 0) |
-| Source      | the operator's callsign and SSID; this is the legal station identification |
+| Source      | the operator's callsign and SSID; this is the legal station identification. In a hidden-source packet (section 6): the placeholder `TAKWV-15`, the same for every station |
 | Digipeaters | none are sent; received frames with a digipeater path are accepted |
 
-The AX.25 header is always sent in the clear, including when payload encryption is on.
+The AX.25 header is always sent in the clear, including when payload encryption is on. A
+station that hides its callsign puts the placeholder in the header and its real address inside
+the ciphertext; such frames do not identify the station, which must identify itself by other
+means. `TAKWV-15` is never a station's own address.
 
 One TAKwave message is carried per frame. The information field is at most **256 bytes**, the
 AX.25 default, so that hardware TNCs can pass it.
@@ -65,7 +69,7 @@ All multi-byte integers are **big-endian**.
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0      | 1    | Magic and version: `0x54 + version`. Version 0 is `0x54` (ASCII `T`). Versions 0-15 map to `0x54`-`0x63`. |
+| 0      | 1    | Magic and version: `0x54 + version`. Version 0 is `0x54` (ASCII `T`). Versions 0-15 map to `0x54`-`0x63`. Version 1 (`0x55`) is only valid for an encrypted hidden-source packet (section 6). |
 | 1      | 1    | Type and flags (below) |
 | 2      | n    | Body |
 
@@ -112,7 +116,7 @@ index this table (append-only):
 ### Position
 * Latitude: int32, degrees x 1e7, valid range +/-900000000.
 * Longitude: int32, degrees x 1e7, valid range +/-1800000000.
-* HAE: int16, metres above the WGS-84 ellipsoid. `-32768` means unknown.
+* HAE: int16, meters above the WGS-84 ellipsoid. `-32768` means unknown.
 
 A receiver rejects packets whose latitude or longitude is out of range.
 
@@ -136,7 +140,7 @@ Unlisted codes decode as unknown.
 | lat      | int32 |
 | lon      | int32 |
 | hae      | int16 |
-| ce       | uint16, circular error in metres; `0xFFFF` unknown |
+| ce       | uint16, circular error in meters; `0xFFFF` unknown |
 | speed    | uint16, units of 0.1 m/s; `0xFFFF` unknown |
 | course   | uint16, whole degrees 0-359; any value of 360 or more means unknown (sent as `0xFFFF`) |
 | team     | 1 byte |
@@ -164,13 +168,13 @@ extension with the report counter (4.4), 2 more bytes.
 |---------|----------|
 | uid     | Identifier |
 | type    | CoT type |
-| flags   | 1 byte: bit 0 = remarks present, bit 1 = colour present; other bits reserved (0) |
+| flags   | 1 byte: bit 0 = remarks present, bit 1 = color present; other bits reserved (0) |
 | name    | String, cap 32 |
 | lat     | int32 |
 | lon     | int32 |
 | hae     | int16 |
 | remarks | String, cap 80; only if flag bit 0 |
-| colour  | int32 ARGB; only if flag bit 1 |
+| color   | int32 ARGB; only if flag bit 1 |
 
 Points only. Shapes, routes, and attachments are never sent.
 
@@ -252,7 +256,11 @@ is sent at once and twice more, 30 s apart. These are first transmissions (no ag
 
 * Verify the FCS, that the frame is a UI frame with PID `0xF0`, and that the destination is `TAKWV`.
 * Validate every length and range. A malformed packet is logged and dropped; it never reaches a TAK client.
-* Ignore frames whose source address equals the station's own.
+* Ignore frames whose source address equals the station's own. For a hidden-source packet the
+  source address is the one inside the ciphertext, and the check happens after decryption.
+* Drop a frame from `TAKWV-15` that is not a hidden-source packet, and a hidden-source packet
+  whose inner address is `TAKWV-15`. Everywhere else (heard stations, report counters, store
+  and forward) the inner address takes the place of the AX.25 source.
 * Never retransmit anything that was received from RF, except as section 9 allows.
 * A chat message already received (same message id) is not delivered to TAK clients again. A
   marker or alert is not delivered again when it equals the newest version received for its uid,
@@ -292,7 +300,27 @@ the additional authenticated data (AAD) is payload bytes 0 and 1. All AEAD tags 
 | 4-7 | reserved | | |
 
 The type byte adds one more byte in every suite. The chat text cap shrinks so the payload
-stays within 256 bytes.
+stays within 256 bytes; an encrypting station also keeps 8 bytes free for a hidden source,
+whether it hides its callsign or not, so that any encrypted chat can be relayed by a hiding
+station with the same text.
+
+### Hidden source (version 1)
+
+A station may also hide its callsign. It then sends every packet as version 1:
+
+* AX.25 source: the placeholder `TAKWV-15`. Destination, control and PID are unchanged.
+* Payload byte 0: `0x55` (`0x54 + 1`). Byte 1 as above. Both are the AAD, as in every suite, so
+  the version cannot be changed without failing authentication.
+* Plaintext: the type byte, then the sending station's address, then the message body and
+  extension as in version 0. The address is a String (cap 6) holding the upper-case callsign
+  (`A`-`Z`, `0`-`9`, 1 to 6 characters) followed by one byte SSID (0-15): at most 8 bytes.
+
+A version-1 packet without `ENC` is invalid and dropped. A receiver that implements version 1
+accepts both versions regardless of its own setting. A version-0 receiver drops version-1
+packets, so every station of a team must be updated before anyone hides its callsign.
+
+A relay is the sending station of what it relays, so a relayed hidden-source packet carries the
+relay's address inside, exactly as a clear relay puts its own callsign in the AX.25 header.
 
 ### Shared-key suites (0 and 1)
 
@@ -360,7 +388,7 @@ Defaults: `L` = 3000 ms, `N` = 8. The default slot is CRC-16-CCITT (as in sectio
 upper-case ASCII `CALL-SSID` string (no `-SSID` when the SSID is 0), modulo `N`; because two
 callsigns can map to the same slot, groups should assign slots explicitly.
 
-All stations need UTC to within about `G`. Sources: the phone's network-synchronised clock,
+All stations need UTC to within about `G`. Sources: the phone's network-synchronized clock,
 or GNSS time.
 
 ## 8. Versioning rules
@@ -368,17 +396,20 @@ or GNSS time.
 1. The version lives in byte 0. A receiver drops packets whose version it does not implement.
 2. Changes that an old receiver can safely ignore do **not** bump the version: appending to the
    CoT type table, the team or role lists, or adding fields to the *end* of a message body.
-3. Old receivers treat unknown team and role codes as unknown, but drop packets with unknown CoT
+3. Senders use the lowest version that can express a packet: version 1 only for hidden-source
+   packets.
+4. Old receivers treat unknown team and role codes as unknown, but drop packets with unknown CoT
    type codes, identifier kinds, room codes, or message types. Senders should prefer the literal
    forms when talking to a mixed fleet. Message type 4 (Emergency) and extension bit 5 (report
    counter) were added this way, without a version change: a receiver that predates them drops
    emergency packets and ignores the counter.
-4. Anything that changes the meaning or position of an existing field requires a new version.
-5. Reserved bits are sent as 0 and ignored on receive.
+5. Anything that changes the meaning or position of an existing field requires a new version.
+   Version 1 is such a change: the station address sits in front of the body.
+6. Reserved bits are sent as 0 and ignored on receive.
 
 ## 9. Store and forward
 
-Store and forward is a station-local behaviour; the only thing it puts on the air is the relay
+Store and forward is a station-local behavior; the only thing it puts on the air is the relay
 byte (section 4.4).
 
 * **Only chat, markers and emergency alerts.** Position reports are never held, re-sent or relayed.
@@ -397,13 +428,14 @@ byte (section 4.4).
   packet travels at most one extra hop and cannot loop.
 * **Encryption.** A relay never changes a packet's protection: an encrypting station relays
   only encrypted traffic (sealed again with its own key), a clear station only clear traffic.
+  A hidden-source packet is relayed only by a station that hides its own callsign too.
 * **Suppression.** Hearing any station transmit the same message cancels a pending repeat (for an
   alert, the author's 30-second repeats keep relays quiet). A newer version of a marker or alert
   (later original time; a cancel is a newer version of its alert) discards the held one; an older
   one is ignored.
 * **Restarts.** A station may keep held messages across a restart (TAKwave does). It must drop
-  them if its encryption was switched on or off in between, so a message is never sent with a
-  different protection than it had.
+  them if its encryption or callsign hiding was switched on or off in between, so a message is
+  never sent with a different protection than it had.
 * **Limits** (defaults; configurable per station): a message is held for 30 minutes; each
   station repeats one message at most 3 times; the same message is not repeated within
   2 minutes of the last time it was sent or heard; a station transmits at most 6 repeats in any

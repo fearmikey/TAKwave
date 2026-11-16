@@ -101,7 +101,7 @@ class PacketCodecTest {
             assertEquals(t, m.team)
             assertEquals(r, m.role)
         }
-        assertEquals(15, Team.entries.size) // 14 colours plus UNKNOWN
+        assertEquals(15, Team.entries.size) // 14 colors plus UNKNOWN
         assertEquals(Team.DARK_BLUE, Team.fromCotName("Dark Blue"))
         assertEquals(Role.FORWARD_OBSERVER, Role.fromCotName("Forward Observer"))
         assertEquals(Team.UNKNOWN, Team.fromCotName("Chartreuse"))

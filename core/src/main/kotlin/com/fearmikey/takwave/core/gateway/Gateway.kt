@@ -37,7 +37,7 @@ fun TakMessage.summary(): String = when (this) {
     is MarkerMessage -> "MARKER $name ($cotType) %.5f,%.5f".format(java.util.Locale.ROOT, lat, lon)
     is EmergencyMessage ->
         if (active) "EMERGENCY ${kind.label} $text %.5f,%.5f".format(java.util.Locale.ROOT, lat, lon)
-        else "EMERGENCY cancelled $text"
+        else "EMERGENCY canceled $text"
 }
 
 /** What happened to one CoT event received from a TAK client. */
@@ -91,6 +91,8 @@ data class RfOutcome(
     /** Seconds since the author first sent the message; 0 for a first transmission. */
     val ageS: Int = 0,
     val kind: RxKind = if (xml != null) RxKind.DELIVERED else RxKind.INVALID,
+    /** True when [source] was read from inside the ciphertext (a hidden-source packet). */
+    val hiddenSource: Boolean = false,
 )
 
 /** A station heard on the air, keyed by its AX.25 source address. */
@@ -111,7 +113,7 @@ data class HeardStation(
         get() = if (pliReceived < 5) null else pliReceived.toFloat() / (pliReceived + pliMissed)
 }
 
-/** An emergency alert heard on the air that has not been cancelled. */
+/** An emergency alert heard on the air that has not been canceled. */
 data class HeardAlert(
     val message: EmergencyMessage,
     /** The station it was heard from (a relay, when [relayed]). */
@@ -146,7 +148,16 @@ class Gateway(
     private val repeatConfig: RepeatConfig = RepeatConfig(),
     random: java.util.Random = java.util.Random(),
     emergencyConfig: EmergencyConfig = EmergencyConfig(),
+    /**
+     * Send every frame with [HIDDEN_SOURCE] in the AX.25 header and the real [source] sealed
+     * inside the encrypted payload (PROTOCOL.md 6). Needs an encrypting [codec].
+     */
+    private val hideSource: Boolean = false,
 ) {
+    init {
+        require(!hideSource || codec.encrypts) { "hiding the callsign needs encryption" }
+    }
+
     private val scheduler = PliScheduler(pliConfig)
     private val beacon = EmergencyBeacon(emergencyConfig)
     private val queue = TxQueue(queueSize)
@@ -230,15 +241,27 @@ class Gateway(
             repeats.onOwnSent(entry.message, present(now), now)
             // Position reports carry a counter so receivers can tell how many they missed.
             val seq = if (entry.message is PliMessage) pliSeq.also { pliSeq = (pliSeq + 1) and 0xFF } else null
-            val frame = Ax25Frame(DESTINATION, src, codec.encode(entry.message, seq = seq)).encode()
+            val frame = Ax25Frame(DESTINATION, headerSource(src), codec.encode(entry.message, seq = seq, hiddenSource = innerSource(src))).encode()
             return TxItem(frame, entry.message, entry.enqueuedAtMs)
         }
         // Repeats only use air time that fresh traffic does not need.
         val repeat = repeats.nextDue(now, present(now)) ?: return null
         // The age lets receivers show the time the message was written, not the time this copy arrived.
         val ageS = ((now - repeat.originMs) / 1000).toInt()
-        val frame = Ax25Frame(DESTINATION, src, codec.encode(repeat.message, if (repeat.relayed) 1 else 0, ageS)).encode()
+        val payload = codec.encode(repeat.message, if (repeat.relayed) 1 else 0, ageS, hiddenSource = innerSource(src))
+        val frame = Ax25Frame(DESTINATION, headerSource(src), payload).encode()
         return TxItem(frame, repeat.message, now, if (repeat.relayed) TxKind.RELAY else TxKind.RESEND)
+    }
+
+    private fun headerSource(src: Ax25Address): Ax25Address = if (hideSource) HIDDEN_SOURCE else src
+
+    private fun innerSource(src: Ax25Address): Ax25Address? = if (hideSource) src else null
+
+    /** 0 clear, 1 encrypted, 2 encrypted with the callsign hidden; saved with held messages. */
+    private val protection: Int get() = when {
+        !codec.encrypts -> 0
+        hideSource -> 2
+        else -> 1
     }
 
     // ---- RF -> TAK clients ----
@@ -247,15 +270,26 @@ class Gateway(
     fun onRfFrame(frameBytes: ByteArray): RfOutcome {
         val now = clock.nowMs()
         val frame = Ax25Frame.decode(frameBytes) ?: return RfOutcome(null, note = "not a valid AX.25 frame", kind = RxKind.OTHER)
-        val src = frame.source.toString()
+        val headerSrc = frame.source.toString()
         if (!frame.isUi || frame.pid != Ax25Frame.PID_NO_LAYER3 || frame.destination.call != DESTINATION.call) {
-            return RfOutcome(null, source = src, note = "not a TAKwave frame (to ${frame.destination})", kind = RxKind.OTHER)
+            return RfOutcome(null, source = headerSrc, note = "not a TAKwave frame (to ${frame.destination})", kind = RxKind.OTHER)
         }
-        if (frame.source == source) return RfOutcome(null, source = src, note = "own transmission heard", kind = RxKind.REPEAT)
-        if (isDuplicate(frame.info, now)) return RfOutcome(null, source = src, note = "duplicate", kind = RxKind.REPEAT)
+        if (frame.source == source) return RfOutcome(null, source = headerSrc, note = "own transmission heard", kind = RxKind.REPEAT)
+        if (isDuplicate(frame.info, now)) return RfOutcome(null, source = headerSrc, note = "duplicate", kind = RxKind.REPEAT)
         val decoded = codec.decode(frame.info)
-        if (decoded is DecodeResult.Error) return RfOutcome(null, source = src, note = decoded.reason)
+        if (decoded is DecodeResult.Error) return RfOutcome(null, source = headerSrc, note = decoded.reason)
         val ok = decoded as DecodeResult.Ok
+        // A hidden-source packet names its station inside the ciphertext; from here on that is the source.
+        val hidden = ok.hiddenSource
+        if (frame.source == HIDDEN_SOURCE && hidden == null) {
+            return RfOutcome(null, source = headerSrc, note = "placeholder source without a station address inside")
+        }
+        if (hidden == HIDDEN_SOURCE) return RfOutcome(null, source = headerSrc, note = "placeholder used as a station address")
+        if (hidden != null && hidden == source) {
+            return RfOutcome(null, source = hidden.toString(), note = "own transmission heard", kind = RxKind.REPEAT, hiddenSource = true)
+        }
+        val src = hidden?.toString() ?: headerSrc
+        val isHidden = hidden != null
         val message = ok.message
         // A relayed frame carries the relay's callsign, but its content describes someone else.
         val relayed = ok.hops > 0
@@ -316,9 +350,10 @@ class Gateway(
 
         // Store and forward: hearing a message tells us it does not need repeating right now.
         if (message !is PliMessage) {
-            // Only pass on what came straight from its author, and never change how it is protected:
-            // clear traffic is not relayed by an encrypting station, nor the other way round.
-            val mayRelay = !relayed && source != null && ok.encrypted == (codec.cipherDescription != null)
+            // Only pass on what came straight from its author, and never lower how it is protected:
+            // clear traffic is not relayed by an encrypting station, nor the other way round, and
+            // a hidden-source packet is only relayed by a station that hides its own callsign too.
+            val mayRelay = !relayed && source != null && ok.encrypted == codec.encrypts && (!isHidden || hideSource)
             repeats.onRf(message, src, seenResult == SeenResult.NEW, mayRelay, present(now), now, originMs)
         }
         repeats.onStationHeard(src, now) { m -> (m as? ChatMessage)?.let { uidSource[it.roomId] } }
@@ -326,10 +361,10 @@ class Gateway(
             SeenResult.REPEAT -> {
                 // The author's own repeats of an active alert are delivered, so the alert stays fresh in ATAK.
                 val refresh = message is EmergencyMessage && message.active && !relayed
-                if (!refresh) return RfOutcome(null, message, src, ok.encrypted, "already received", relayed, ok.ageS, RxKind.REPEAT)
+                if (!refresh) return RfOutcome(null, message, src, ok.encrypted, "already received", relayed, ok.ageS, RxKind.REPEAT, isHidden)
             }
             SeenResult.OUTDATED -> return RfOutcome(
-                null, message, src, ok.encrypted, "older than the version already received", relayed, ok.ageS, RxKind.REPEAT,
+                null, message, src, ok.encrypted, "older than the version already received", relayed, ok.ageS, RxKind.REPEAT, isHidden,
             )
             SeenResult.NEW -> {}
         }
@@ -341,7 +376,7 @@ class Gateway(
             }
             else -> CotBuilder.build(message, now, originMs)
         }
-        return RfOutcome(xml, message, src, ok.encrypted, relayed = relayed, ageS = ok.ageS)
+        return RfOutcome(xml, message, src, ok.encrypted, relayed = relayed, ageS = ok.ageS, hiddenSource = isHidden)
     }
 
     private fun isDuplicate(info: ByteArray, now: Long): Boolean {
@@ -356,7 +391,7 @@ class Gateway(
     @Synchronized
     fun heardStations(): List<HeardStation> = heard.values.sortedByDescending { it.lastHeardMs }
 
-    /** Alerts heard on the air within the last half hour and not cancelled, most recent first. */
+    /** Alerts heard on the air within the last half hour and not canceled, most recent first. */
     @Synchronized
     fun heardAlerts(): List<HeardAlert> {
         val now = clock.nowMs()
@@ -376,7 +411,8 @@ class Gateway(
         DataOutputStream(bytes).use { out ->
             out.writeInt(STATE_MAGIC)
             out.writeByte(STATE_VERSION)
-            out.writeBoolean(codec.cipherDescription != null)
+            // One byte; 0 and 1 read the same as the boolean (encrypted or not) older versions wrote.
+            out.writeByte(protection)
             repeats.writeTo(out)
             seen.writeTo(out)
         }
@@ -385,8 +421,9 @@ class Gateway(
 
     /**
      * Takes back what [saveState] wrote in an earlier run. Nothing changes unless the whole state
-     * reads correctly. Held messages are dropped when encryption was switched on or off since,
-     * so a message is never sent with a different protection than it had (PROTOCOL.md 9).
+     * reads correctly. Held messages are dropped when encryption or callsign hiding was switched
+     * on or off since, so a message is never sent with a different protection than it had
+     * (PROTOCOL.md 9).
      */
     @Synchronized
     fun restoreState(state: ByteArray): RestoreResult {
@@ -394,17 +431,19 @@ class Gateway(
             val input = DataInputStream(ByteArrayInputStream(state))
             if (input.readInt() != STATE_MAGIC) return RestoreResult(0, 0, "not a TAKwave state file")
             if (input.readUnsignedByte() != STATE_VERSION) return RestoreResult(0, 0, "saved by a different TAKwave version")
-            val wasProtected = input.readBoolean()
+            val wasProtection = input.readUnsignedByte()
+            if (wasProtection > 2) return RestoreResult(0, 0, "saved state unreadable (protection $wasProtection)")
             val held = repeats.read(input)
             val seenSaved = seen.read(input)
             val now = clock.nowMs()
-            val sameProtection = wasProtected == (codec.cipherDescription != null)
+            val sameProtection = wasProtection == protection
             val heldCount = if (sameProtection) repeats.restore(held, now) else 0
             val seenCount = seen.restore(seenSaved, now)
-            val note = if (!sameProtection && held.entries.isNotEmpty()) {
-                "encryption was switched ${if (wasProtected) "off" else "on"} since; held messages discarded"
-            } else {
-                null
+            val note = when {
+                sameProtection || held.entries.isEmpty() -> null
+                wasProtection == 0 || protection == 0 ->
+                    "encryption was switched ${if (protection == 0) "off" else "on"} since; held messages discarded"
+                else -> "callsign hiding was switched ${if (protection == 2) "on" else "off"} since; held messages discarded"
             }
             RestoreResult(heldCount, seenCount, note)
         } catch (e: Exception) {
@@ -414,6 +453,11 @@ class Gateway(
 
     companion object {
         val DESTINATION = Ax25Address("TAKWV")
+        /**
+         * AX.25 source of every hidden-source frame (PROTOCOL.md 6). The same for all stations, so
+         * the header says nothing about who sent the frame. Not usable as a station's own address.
+         */
+        val HIDDEN_SOURCE = Ax25Address("TAKWV", 15)
         /** Identical payloads inside this window are treated as digipeated or multipath copies. */
         const val DUPLICATE_WINDOW_MS = 5_000L
         private const val MAX_TRACKED = 256

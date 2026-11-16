@@ -10,6 +10,12 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.fearmikey.takwave.core.ax25.Ax25Address
+import com.fearmikey.takwave.core.gateway.Gateway
+import com.fearmikey.takwave.core.radio.Band
+import com.fearmikey.takwave.core.radio.ChannelWidth
+import com.fearmikey.takwave.core.radio.RadioGuide
+import com.fearmikey.takwave.core.radio.RadioService
+import com.fearmikey.takwave.core.radio.Terrain
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -69,7 +75,7 @@ enum class TimeSource(val label: String) {
 data class Settings(
     val callsign: String = "",
     val ssid: Int = 0,
-    val takPort: Int = 8087,
+    val takPort: Int = DEFAULT_TAK_PORT,
     val allowLan: Boolean = false,
     val pliBaseS: Int = 60,
     val pliMinS: Int = 15,
@@ -104,6 +110,11 @@ data class Settings(
     val encryption: EncryptionMode = EncryptionMode.OFF,
     val cipher: CipherChoice = CipherChoice.AES_GCM,
     val passphrase: String = "",
+    /**
+     * Also encrypt the callsign: frames carry a shared placeholder as AX.25 source and the real
+     * address inside the ciphertext. Only takes effect while [encryption] is on; off by default.
+     */
+    val hideCallsign: Boolean = false,
     /** Time-slotted transmit (TDMA overlay on top of carrier sensing). */
     val slotted: Boolean = false,
     val slotLengthMs: Int = 3000,
@@ -127,13 +138,36 @@ data class Settings(
     val fx25: Fx25Mode = Fx25Mode.OFF,
     /** False until the first-run setup guide has been finished or skipped. */
     val onboardingDone: Boolean = false,
+    /** Radio guide choices. Advice only: nothing in the gateway reads them. */
+    val radioService: RadioService = RadioService.AMATEUR,
+    val radioBand: Band = Band.VHF,
+    val channelWidth: ChannelWidth = ChannelWidth.WIDE,
+    val terrain: Terrain = Terrain.OPEN,
 ) {
+    /** The channel width in effect: business band is always narrow. */
+    val effectiveChannelWidth: ChannelWidth get() = RadioGuide.effectiveWidth(radioService, channelWidth)
+
     /** The Bluetooth PTT commands in effect, in PttCommand syntax. */
     val btKeyText: String get() = if (btPttPreset == BtPttPreset.CUSTOM) btKeyCommand else btPttPreset.key
     val btUnkeyText: String get() = if (btPttPreset == BtPttPreset.CUSTOM) btUnkeyCommand else btPttPreset.unkey
 
     /** The station's AX.25 address, or null while the callsign is missing or invalid. */
-    val address: Ax25Address? get() = if (callsign.isBlank()) null else Ax25Address.parse("$callsign-$ssid")
+    val address: Ax25Address?
+        get() = if (callsign.isBlank()) null else Ax25Address.parse("$callsign-$ssid")?.takeIf { it != Gateway.HIDDEN_SOURCE }
+
+    /** True when frames go out with the callsign sealed inside the encrypted payload. */
+    val callsignHidden: Boolean get() = hideCallsign && encryption != EncryptionMode.OFF
+
+    companion object {
+        const val DEFAULT_TAK_PORT = 8099
+
+        /**
+         * ATAK's own built-in TCP CoT input. With TAKwave on this port ATAK can end up connected to
+         * itself, gets no ping replies and drops the link every ~30 s. It was TAKwave's default up
+         * to 0.3.0, so a stored 8087 is read as [DEFAULT_TAK_PORT], and the setting refuses it.
+         */
+        const val ATAK_INPUT_PORT = 8087
+    }
 }
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -153,7 +187,7 @@ class SettingsStore(context: Context) {
         return Settings(
             callsign = p[CALLSIGN] ?: d.callsign,
             ssid = p[SSID] ?: d.ssid,
-            takPort = p[TAK_PORT] ?: d.takPort,
+            takPort = p[TAK_PORT]?.takeIf { it != Settings.ATAK_INPUT_PORT } ?: d.takPort,
             allowLan = p[ALLOW_LAN] ?: d.allowLan,
             pliBaseS = p[PLI_BASE] ?: d.pliBaseS,
             pliMinS = p[PLI_MIN] ?: d.pliMinS,
@@ -182,6 +216,7 @@ class SettingsStore(context: Context) {
             encryption = enumOf(p[ENCRYPTION], d.encryption),
             cipher = enumOf(p[CIPHER], d.cipher),
             passphrase = p[PASSPHRASE] ?: d.passphrase,
+            hideCallsign = p[HIDE_CALLSIGN] ?: d.hideCallsign,
             slotted = p[SLOTTED] ?: d.slotted,
             slotLengthMs = p[SLOT_LENGTH] ?: d.slotLengthMs,
             slotCount = p[SLOT_COUNT] ?: d.slotCount,
@@ -195,6 +230,10 @@ class SettingsStore(context: Context) {
             repeatBudget = p[REPEAT_BUDGET] ?: d.repeatBudget,
             fx25 = enumOf(p[FX25], d.fx25),
             onboardingDone = p[ONBOARDING_DONE] ?: d.onboardingDone,
+            radioService = enumOf(p[RADIO_SERVICE], d.radioService),
+            radioBand = enumOf(p[RADIO_BAND], d.radioBand),
+            channelWidth = enumOf(p[CHANNEL_WIDTH], d.channelWidth),
+            terrain = enumOf(p[TERRAIN], d.terrain),
         )
     }
 
@@ -230,6 +269,7 @@ class SettingsStore(context: Context) {
         p[ENCRYPTION] = s.encryption.name
         p[CIPHER] = s.cipher.name
         p[PASSPHRASE] = s.passphrase
+        p[HIDE_CALLSIGN] = s.hideCallsign
         p[SLOTTED] = s.slotted
         p[SLOT_LENGTH] = s.slotLengthMs
         p[SLOT_COUNT] = s.slotCount
@@ -243,6 +283,10 @@ class SettingsStore(context: Context) {
         p[REPEAT_BUDGET] = s.repeatBudget
         p[FX25] = s.fx25.name
         p[ONBOARDING_DONE] = s.onboardingDone
+        p[RADIO_SERVICE] = s.radioService.name
+        p[RADIO_BAND] = s.radioBand.name
+        p[CHANNEL_WIDTH] = s.channelWidth.name
+        p[TERRAIN] = s.terrain.name
     }
 
     private inline fun <reified E : Enum<E>> enumOf(name: String?, default: E): E =
@@ -276,6 +320,7 @@ class SettingsStore(context: Context) {
         val ENCRYPTION = stringPreferencesKey("encryption")
         val PASSPHRASE = stringPreferencesKey("passphrase")
         val CIPHER = stringPreferencesKey("cipher")
+        val HIDE_CALLSIGN = booleanPreferencesKey("hide_callsign")
         val SLOTTED = booleanPreferencesKey("slotted")
         val SLOT_LENGTH = intPreferencesKey("slot_length_ms")
         val SLOT_COUNT = intPreferencesKey("slot_count")
@@ -293,5 +338,9 @@ class SettingsStore(context: Context) {
         val REPEAT_GAP = intPreferencesKey("repeat_gap_s")
         val REPEAT_BUDGET = intPreferencesKey("repeat_budget")
         val FX25 = stringPreferencesKey("fx25")
+        val RADIO_SERVICE = stringPreferencesKey("radio_service")
+        val RADIO_BAND = stringPreferencesKey("radio_band")
+        val CHANNEL_WIDTH = stringPreferencesKey("channel_width")
+        val TERRAIN = stringPreferencesKey("terrain")
     }
 }

@@ -126,6 +126,24 @@ class StatePersistenceTest {
     }
 
     @Test
+    fun heldMessagesAreDroppedWhenCallsignHidingWasSwitched() {
+        fun codec() = PacketCodec(PayloadCrypto.fromPassphrase("fleet key".toCharArray()))
+        val hiding = Gateway(clock, Ax25Address("WQAA11"), codec(), random = Random(3), hideSource = true)
+        hiding.onClientEvent(golden("chat_all_atak.xml"))
+        drain(hiding)
+        val state = hiding.saveState()
+
+        val shown = station("WQAA11", codec = codec())
+        val result = shown.restoreState(state)
+        assertEquals(0, result.held)
+        assertTrue(result.note!!.contains("callsign hiding was switched off"))
+
+        // Same setting again: kept.
+        val again = Gateway(clock, Ax25Address("WQAA11"), codec(), random = Random(3), hideSource = true)
+        assertEquals(RestoreResult(held = 1, seen = 1), again.restoreState(state))
+    }
+
+    @Test
     fun aDamagedFileChangesNothing() {
         val a = station("N0AAA")
         a.onClientEvent(golden("chat_all_atak.xml"))

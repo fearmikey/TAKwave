@@ -30,7 +30,7 @@
         "codec": {
           "responsibility": "Over-air binary payload (PLI/Chat/Marker/Emergency), field encodings and caps, the extension byte (hop count, age, PLI report counter), payload encryption suites and key loading",
           "files": ["codec/Messages.kt", "codec/PacketCodec.kt", "codec/PayloadCrypto.kt"],
-          "notes": "PayloadCrypto.kt holds PayloadCipher, AeadCipher (suites 0/1), EciesCipher (suites 2/3), KeyLoader (passphrase, key files, PEM, ECDH, HKDF)"
+          "notes": "PayloadCrypto.kt holds PayloadCipher, AeadCipher (suites 0/1), EciesCipher (suites 2/3), KeyLoader (passphrase, key files, PEM, ECDH, HKDF). PacketCodec.encode(hiddenSource=) writes a version-1 hidden-source packet (station address sealed after the type byte; refuses without a cipher); decode returns it as DecodeResult.Ok.hiddenSource. Encrypting codecs always reserve Wire.HIDDEN_SOURCE_MAX_SIZE in chats."
         },
         "cot": {
           "responsibility": "CoT XML: hardened parsing (including the <emergency> detail), stream splitting on </event>, classification of client events (b-a-* alerts become EmergencyMessage), rebuilding XML for RF traffic",
@@ -44,12 +44,16 @@
           "responsibility": "Rolling 10-minute channel statistics in 10 s buckets: channel busy, own air time, RX/TX event counts (ChannelEvent), snapshot as ChannelHealth",
           "files": ["stats/ChannelStats.kt"]
         },
+        "radio": {
+          "responsibility": "RadioGuide: advice-only band plan data and rules for the radio guide. RadioService (AMATEUR/BUSINESS), Band (VHF/UHF), ChannelWidth (NARROW/WIDE with peak and data deviation), Terrain; recommendedBand and reasons per terrain, FX.25 suggestion, terrain tips, radio checklist for data, suggested and to-avoid frequencies (ARRL 2 m packet channels, 70 cm 445-447 local option, Part 90 itinerant channels from 47 CFR 90.35). US rules only. Business band is always NARROW (effectiveWidth)",
+          "files": ["radio/RadioGuide.kt"]
+        },
         "profile": {
           "responsibility": "TeamProfile: the team-wide settings as a takwave://profile?... link (also file and QR content); strict validation, slot assignment table, never key material",
           "files": ["profile/TeamProfile.kt"]
         },
         "gateway": {
-          "responsibility": "I/O-free heart of the app: client CoT -> queue -> AX.25 frames, and RF frames -> CoT; heard-station table with PLI loss from report-counter gaps; heard alerts and own alerts; RxKind on every RF outcome for statistics; feeds RepeatStore and emits re-sent/relayed frames (TxKind) when the queue is empty; saveState/restoreState for store-and-forward persistence",
+          "responsibility": "I/O-free heart of the app: client CoT -> queue -> AX.25 frames, and RF frames -> CoT; optional hideSource (AX.25 source Gateway.HIDDEN_SOURCE = TAKWV-15, real address inside the ciphertext; receive uses the inner address as source everywhere); heard-station table with PLI loss from report-counter gaps; heard alerts and own alerts; RxKind on every RF outcome for statistics; feeds RepeatStore and emits re-sent/relayed frames (TxKind) when the queue is empty; saveState/restoreState for store-and-forward persistence",
           "files": ["gateway/Gateway.kt"]
         },
         "io": {
@@ -71,11 +75,11 @@
       "root": "app/src/main/java/com/fearmikey/takwave",
       "packages": {
         "(root)": {
-          "responsibility": "Application class, manual wiring (AppContainer also holds StateFile and pendingProfile), single activity: shows the setup guide until Settings.onboardingDone, then tab navigation; accepts takwave://profile links (onCreate/onNewIntent) and shows ProfileImportDialog for any pending profile",
+          "responsibility": "Application class, manual wiring (AppContainer also holds StateFile and pendingProfile), single activity: shows the setup guide until Settings.onboardingDone, then Status as home with a saveable back stack of Screen entries (Settings, its pages, Calibrate, Log, About) and a SaveableStateHolder keeping scroll state; accepts takwave://profile links (onCreate/onNewIntent) and shows ProfileImportDialog for any pending profile",
           "files": ["TakwaveApp.kt", "MainActivity.kt"]
         },
         "data": {
-          "responsibility": "Settings model (including Fx25Mode) and DataStore persistence; imported key files and cipher construction; Settings <-> TeamProfile mapping and change list; store-and-forward state file (AtomicFile in noBackupFilesDir)",
+          "responsibility": "Settings model (including Fx25Mode and the radio guide choices radioService/radioBand/channelWidth/terrain, which the gateway never reads; effectiveChannelWidth) and DataStore persistence; imported key files and cipher construction; Settings <-> TeamProfile mapping and change list; store-and-forward state file (AtomicFile in noBackupFilesDir)",
           "files": ["data/Settings.kt", "data/KeyFiles.kt", "data/TeamProfiles.kt", "data/StateFile.kt"]
         },
         "engine": {
@@ -87,11 +91,11 @@
           "files": ["service/TakwaveService.kt"]
         },
         "net": {
-          "responsibility": "Local TCP CoT server; share-sheet export of the data package, team profile and log",
+          "responsibility": "Local TCP CoT server (default port Settings.DEFAULT_TAK_PORT 8099; 8087 = ATAK's own input, refused and migrated, DECISIONS 103); share-sheet export of the data package, team profile and log",
           "files": ["net/CotServer.kt", "net/Sharing.kt"]
         },
         "audio": {
-          "responsibility": "AudioRecord/AudioTrack implementations of AudioSource/AudioSink, audio device enumeration",
+          "responsibility": "AudioRecord/AudioTrack implementations of AudioSource/AudioSink, audio device enumeration, AudioDevices.hasUsbAudio (any USB sound card attached)",
           "files": ["audio/AndroidAudio.kt"]
         },
         "ptt": {
@@ -100,14 +104,14 @@
         },
         "ui": {
           "responsibility": "Compose screens and shared widgets",
-          "files": ["ui/Theme.kt", "ui/StatusScreen.kt", "ui/SettingsScreen.kt", "ui/LogScreen.kt", "ui/CalibrateScreen.kt", "ui/AboutScreen.kt", "ui/OnboardingScreen.kt", "ui/HelpText.kt", "ui/Scrollbar.kt", "ui/TeamProfileUi.kt"],
-          "notes": "Theme.kt holds Section (optional info button) and InfoButton. Scrollbar.kt provides Modifier.verticalScrollbar(ScrollState | LazyListState); every scrolling surface uses it, placed before verticalScroll. SettingsScreen.kt exposes the setting widgets and AudioDeviceSettings / SerialPttSettings / BluetoothPttSettings as internal composables reused by OnboardingScreen.kt. HelpText.kt holds every info-dialog text. StatusScreen.kt shows alert cards, the Channel health section and PLI reception per heard station. TeamProfileUi.kt holds TeamProfileSection (Settings), the share dialog with a ZXing-drawn QR code, and ProfileImportDialog. AboutScreen.kt shows the version (from PackageManager; buildConfig is off), developer, and links (repository, issues, Buy Me a Coffee) opened with ACTION_VIEW only on tap; the URLs are constants at the top of the file. Tabs (MainActivity TABS): Status, Settings, Log, Calibrate, About, in a PrimaryScrollableTabRow."
+          "files": ["ui/Theme.kt", "ui/StatusScreen.kt", "ui/SettingsScreen.kt", "ui/LogScreen.kt", "ui/CalibrateScreen.kt", "ui/AboutScreen.kt", "ui/OnboardingScreen.kt", "ui/HelpText.kt", "ui/Scrollbar.kt", "ui/TeamProfileUi.kt", "ui/RadioGuideScreen.kt"],
+          "notes": "Theme.kt holds Section (optional info button) and InfoButton. Scrollbar.kt provides Modifier.verticalScrollbar(ScrollState | LazyListState); every scrolling surface uses it, placed before verticalScroll. SettingsScreen.kt: SettingsScreen is the list of SettingsPage groups (STATION: station, TAK server, PLI, team profile; RADIO: modem backend, audio, PTT, transmit, Calibrate levels button; CHANNEL: FX.25, CSMA, time slots, store and forward; SECURITY: encryption) with summaries; SettingsPageScreen renders one page; SettingsColumn adds the restart card on every settings screen. It also exposes the setting widgets and AudioDeviceSettings / SerialPttSettings / BluetoothPttSettings as internal composables reused by OnboardingScreen.kt. SerialPttSettings takes onUseVox: when no serial adapter but a USB sound card is attached (auto-PTT cable such as the BTECH APRS-K1 PRO) it shows a hint and a 'Use VOX instead' button (Settings: pttMethod VOX + TXDELAY >= VOX_MIN_TX_DELAY_MS; setup guide: switches RadioSetup to VOX_CABLE, landing on the Transmit step). RadioEngine adds the same hint to the 'Serial PTT unavailable' warning. HelpText.kt holds every info-dialog text. StatusScreen.kt shows alert cards, the Channel health section and PLI reception per heard station. TeamProfileUi.kt holds TeamProfileSection (Settings), the share dialog with a ZXing-drawn QR code, and ProfileImportDialog. AboutScreen.kt shows the version (from PackageManager; buildConfig is off), developer, and links (repository, issues, Buy Me a Coffee) opened with ACTION_VIEW only on tap; the URLs are constants at the top of the file. Navigation (MainActivity): no tab row. StatusScreen is home; top bar IconButtons open Log (ic_log), Settings (ic_settings) and About (ic_about); other screens show a back arrow (ic_back) and BackHandler pops the stack. CalibrateScreen opens from Settings > Radio & audio and from 'Adjust levels' in the Status Radio card (StatusScreen onCalibrate); it takes Settings to show the deviation target for effectiveChannelWidth. RadioGuideScreen (Screen.RADIO_GUIDE) opens from the 'Radio guide' section at the top of the Radio & audio page (SettingsPageScreen onRadioGuide); it renders core RadioGuide.advise for the stored choices, warns when encryption is on with the amateur service, links to Calibrate, and can set the suggested FX.25 mode. Labels for the core radio enums and Settings.radioGuideSummary live in RadioGuideScreen.kt; info text HelpText.RADIO_GUIDE. Icons are app vector drawables; no icon library (docs/DECISIONS.md 60)."
         }
       },
       "resources": {
         "manifest": "app/src/main/AndroidManifest.xml",
         "keepRules": "app/src/main/keepRules/rules.keep",
-        "icons": ["app/src/main/res/drawable/ic_launcher_foreground.xml", "app/src/main/res/drawable/ic_launcher_background.xml", "app/src/main/res/drawable/ic_stat_wave.xml"],
+        "icons": ["app/src/main/res/drawable/ic_launcher_foreground.xml", "app/src/main/res/drawable/ic_launcher_background.xml", "app/src/main/res/drawable/ic_stat_wave.xml", "app/src/main/res/drawable/ic_log.xml", "app/src/main/res/drawable/ic_about.xml", "app/src/main/res/drawable/ic_back.xml", "app/src/main/res/drawable/ic_settings.xml", "app/src/main/res/drawable/ic_chevron.xml"],
         "xml": ["app/src/main/res/xml/usb_device_filter.xml", "app/src/main/res/xml/file_paths.xml"]
       }
     },
@@ -144,7 +148,7 @@
       "Own traffic: Gateway.pollFrame sends a queued chat/marker -> RepeatStore.onOwnSent (records stations in range)",
       "RF: Gateway.onRfFrame -> codec extension (DecodeResult.Ok.hops, ageS) -> originMs = now - age -> SeenCache.accept (NEW / REPEAT / OUTDATED marker version; only NEW is delivered) -> CotBuilder uses originMs for event time and chat remarks time, stale from now -> RepeatStore.onRf (cancels pending repeat; relay stations hold messages heard from their author) -> RepeatStore.onStationHeard (schedules repeats for stations not covered; direct chats only for the recipient via uidSource)",
       "Gateway.pollFrame, queue empty -> RepeatStore.nextDue (hold time, repeats per message, min gap, 10-minute budget) -> PacketCodec.encode(message, hops = 1 for relays, ageS = now - originMs) -> TxItem.kind RESEND/RELAY",
-      "Settings resendOwn, relay, repeatHoldMin, repeatMax, repeatGapS, repeatBudget -> RadioEngine -> RepeatConfig; Settings tab section 'Store and forward'"
+      "Settings resendOwn, relay, repeatHoldMin, repeatMax, repeatGapS, repeatBudget -> RadioEngine -> RepeatConfig; Settings > Channel section 'Store and forward'"
     ],
     "emergency": [
       "TAK client b-a-* event -> cot/CotMapper.emergency -> EmergencyMessage -> Gateway.offer -> sched/EmergencyBeacon.update (and SeenCache)",
@@ -156,8 +160,10 @@
     "fx25": "Settings.fx25 -> ModemConfig.fx25CheckBytes -> AfskModulator.modulate -> ax25/Fx25.encodeFrame (falls back to plain HDLC when too long). Receive: every AfskDemodulator slicer feeds bits to HdlcDeframer and Fx25Receiver -> ReedSolomon.decode -> HdlcDeframer on the corrected data -> deliver (CRC de-dup; fecRecovered counts frames only FX.25 got)",
     "channelHealth": "RadioEngine: status thread samples SoftModemTransport.state into stats/ChannelStats (busy/idle, not TX) and adds deltas of fecRecovered and Gateway.queueDropped; onRfFrame counts RfOutcome.kind; transmitLoop records lastAirtimeMs or TX_FAILED -> ChannelStats.snapshot -> RadioStatus.health -> StatusScreen. PLI loss: Gateway encodes a station-wide report counter (extension bit 5) on PLIs; receivers count gaps per source into HeardStation.pliReceived/pliMissed",
     "teamProfile": "Share: ui/TeamProfileUi ProfileShareDialog -> data/TeamProfiles Settings.toTeamProfile -> core profile/TeamProfile.toUri -> QR (ZXing) / net/Sharing.shareProfile / clipboard. Load: takwave://profile link (MainActivity intent filter), file (OpenDocument, 2 KB cap) or clipboard -> AppContainer.pendingProfile -> ProfileImportDialog: TeamProfile.parse + Settings.withTeamProfile + profileChanges -> Apply -> SettingsStore.update",
-    "storeForwardPersistence": "RadioEngine.startBlocking: data/StateFile.read -> Gateway.restoreState (parse fully, then apply; drops held messages if encryption was switched on/off) ; status thread every 30 s and releaseAll on stop: Gateway.saveState -> StateFile.write when changed",
+    "hiddenCallsign": "Settings.hideCallsign (effective only via Settings.callsignHidden, i.e. while encryption is on; also in TeamProfile 'hide') -> RadioEngine (only with a working cipher) -> Gateway(hideSource) -> PacketCodec.encode(hiddenSource) version 1. RF: Gateway.onRfFrame decodes, takes DecodeResult.Ok.hiddenSource as source, own-echo check after decryption; hidden traffic relayed only by hiding relays. UI: SettingsScreen EncryptionDetails switch + warning card; HelpText.ENCRYPTION; TeamProfileUi import warning. docs/PROTOCOL.md section 6 'Hidden source'",
+    "storeForwardPersistence": "RadioEngine.startBlocking: data/StateFile.read -> Gateway.restoreState (parse fully, then apply; drops held messages if encryption or callsign hiding was switched; protection byte 0 clear / 1 encrypted / 2 hidden) ; status thread every 30 s and releaseAll on stop: Gateway.saveState -> StateFile.write when changed",
     "settings": "ui/SettingsScreen -> data/SettingsStore (DataStore) ; read once by service/TakwaveService when it builds RadioEngine",
+    "radioGuide": "ui/RadioGuideScreen choices -> SettingsStore (radioService, radioBand, channelWidth, terrain; a terrain change resets the band to RadioGuide.recommendedBand, a service change coerces the width) -> core radio/RadioGuide.advise -> RadioAdvice rendered on screen ; optional 'Use this FX.25 setting' writes Settings.fx25 ; CalibrateScreen reads Settings.effectiveChannelWidth for its deviation text. Nothing reaches the gateway (docs/DECISIONS.md 104-107)",
     "onboarding": "MainActivity shows ui/OnboardingScreen while Settings.onboardingDone is false: welcome -> permissions -> quick-start offer -> callsign -> radio setup (USB interface / VOX cable / Bluetooth serial PTT / KISS TNC / acoustic) -> setup-specific steps -> done. Values are written straight to SettingsStore; Skip or Finish sets onboardingDone; Settings > 'Run the setup guide again' clears it",
     "bluetoothPtt": "Settings (btPttDevice, btPttPreset, btKeyCommand, btUnkeyCommand) -> RadioEngine.buildSoftModem -> core io/PttCommand.parse -> ptt/BluetoothPtt.open (RFCOMM SPP to a paired device, sends unkey first) -> used as Ptt by SoftModemTransport ; link loss -> RadioEngine.onBluetoothPttLost (pttLost, audio abort, warning)",
     "keys": "ui/SettingsScreen file picker -> data/KeyFiles.import (validates via core codec/KeyLoader) -> files/keys/* ; KeyFiles.buildCipher at gateway start",

@@ -51,8 +51,8 @@ object CotMapper {
         cotType = e.type,
         latE7 = e7(e.lat),
         lonE7 = e7(e.lon),
-        haeM = metres(e.hae, 32767.0),
-        ceM = metres(e.ce, 65534.0)?.let { abs(it) },
+        haeM = meters(e.hae, 32767.0),
+        ceM = meters(e.ce, 65534.0)?.let { abs(it) },
         speedDms = e.speed?.takeIf { it >= 0 && it < 6553.4 }?.let { (it * 10).roundToInt() },
         courseDeg = e.course?.takeIf { it.isFinite() }?.let { ((it.roundToInt() % 360) + 360) % 360 },
         team = Team.fromCotName(e.groupName),
@@ -67,7 +67,7 @@ object CotMapper {
         name = e.callsign ?: "",
         latE7 = e7(e.lat),
         lonE7 = e7(e.lon),
-        haeM = metres(e.hae, 32767.0),
+        haeM = meters(e.hae, 32767.0),
         remarks = e.remarks?.trim()?.takeIf { it.isNotEmpty() },
         colorArgb = e.colorArgb,
     )
@@ -89,7 +89,7 @@ object CotMapper {
                 text = text,
                 latE7 = e7(e.lat),
                 lonE7 = e7(e.lon),
-                haeM = metres(e.hae, 32767.0),
+                haeM = meters(e.hae, 32767.0),
             ),
         )
     }
@@ -120,6 +120,6 @@ object CotMapper {
     private fun e7(deg: Double): Int = (deg * 1e7).roundToLong().toInt()
 
     /** CoT uses 9999999.0 for "unknown"; anything outside the wire range is treated the same way. */
-    private fun metres(v: Double, max: Double): Int? =
+    private fun meters(v: Double, max: Double): Int? =
         if (!v.isFinite() || abs(v) > max) null else v.roundToInt()
 }

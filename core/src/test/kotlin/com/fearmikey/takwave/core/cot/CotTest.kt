@@ -121,7 +121,7 @@ class CotTest {
     }
 
     @Test
-    fun rebuiltEventsAreRecognisedAsFromRf() {
+    fun rebuiltEventsAreRecognizedAsFromRf() {
         for (name in listOf("rx_pli.xml", "rx_chat_all.xml", "rx_chat_direct.xml", "rx_marker_spot.xml", "rx_marker_atom.xml")) {
             val e = CotParser.parse(golden(name))
             assertNotNull(name, e)

@@ -36,6 +36,9 @@ object AudioDevices {
     private fun isUsb(d: AudioDeviceInfo) = d.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
         d.type == AudioDeviceInfo.TYPE_USB_HEADSET || d.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
 
+    /** True when a USB sound card is attached, for example a Digirig or an auto-PTT cable such as the APRS-K1 PRO. */
+    fun hasUsbAudio(context: Context): Boolean = devices(context, AudioManager.GET_DEVICES_ALL).any(::isUsb)
+
     /** Device ids change every time a device is plugged in, so settings store type and product name. */
     fun keyOf(d: AudioDeviceInfo): String = "${d.type}:${d.productName}"
 
@@ -58,7 +61,7 @@ object AudioDevices {
 
 /**
  * Microphone / USB audio capture at 48 kHz mono. Uses the UNPROCESSED source where the device
- * supports it (no AGC, noise suppression or echo cancelling, all of which damage a modem signal)
+ * supports it (no AGC, noise suppression or echo canceling, all of which damage a modem signal)
  * and VOICE_RECOGNITION otherwise.
  */
 class AndroidAudioSource(context: Context, device: AudioDeviceInfo?) : AudioSource {

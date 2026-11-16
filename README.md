@@ -8,7 +8,7 @@
 Positions, chat and map markers between ATAK users with no cell service, no mesh hardware and no ATAK plugin.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.0-blue" alt="Version 0.3.0">
+  <img src="https://img.shields.io/badge/version-0.3.1-blue" alt="Version 0.3.1">
   <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" alt="License GPL-3.0-or-later">
   <img src="https://img.shields.io/badge/Android-10%2B-brightgreen" alt="Android 10+">
   <img src="https://img.shields.io/badge/100%25-FOSS-orange" alt="100% FOSS">
@@ -19,7 +19,7 @@ Positions, chat and map markers between ATAK users with no cell service, no mesh
 TAKwave is an Android app that runs next to ATAK-CIV (or any TAK client) on the same phone. It
 looks like a TAK server to ATAK, but instead of the internet it uses a VHF/UHF handheld: it
 squeezes Cursor-on-Target messages into tiny binary packets and sends them as 1200-baud AFSK
-audio, the same signalling APRS uses. The other phones decode the audio and their ATAK shows
+audio, the same signaling APRS uses. The other phones decode the audio and their ATAK shows
 your team on the map.
 
 **TAKwave is a companion app, not an ATAK plugin.** A plugin is code loaded inside ATAK itself,
@@ -32,7 +32,7 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
  ATAK ◄──TCP── TAKwave ◄── CoT XML rebuilt ◄── AX.25 ◄── AFSK audio ◄── radio ((((
 ```
 
-> **Status: 0.3.0.** The protocol, modem and gateway logic are covered by a unit
+> **Status: 0.3.1.** The protocol, modem and gateway logic are covered by a unit
 > test suite, and the app builds for debug and release. It has **not yet been tested on real
 > phones and radios**; see [docs/TODO.md](docs/TODO.md). Treat it as a beta.
 
@@ -42,7 +42,7 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
   anything else that can connect to a TCP CoT server.
 - **Carries what matters:** your position (PLI), GeoChat messages, point markers, and
   emergency alerts (911, Ring The Bell, In Contact), which jump the queue and repeat every 30 s
-  until cancelled.
+  until canceled.
 - **Built for a slow channel.** A position report is about 37 bytes on the air. Reports are
   throttled, chat jumps the queue, stale traffic is dropped.
 - **Software modem.** Bell 202 AFSK 1200 baud, written in Kotlin, with several parallel
@@ -52,6 +52,9 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
   and how many of each station's position reports arrive.
 - **Team profiles:** share the settings everyone must agree on as a QR code, file or text.
   Keys are never included, and nothing is applied without confirmation.
+- **Radio guide:** suggested band (2 m or 70 cm amateur, VHF or UHF business band), channel
+  width, frequencies to use and to avoid, and radio settings for data, based on your license
+  and terrain (US rules and the ARRL band plan). TAKwave never tunes the radio.
 - **Plays fair on a shared channel.** Carrier-sense channel access (p-persistent CSMA), plus
   optional GPS-timed transmit slots so stations take turns.
 - **Radio safe.** Refuses to transmit without a callsign, never re-sends what it heard, and a
@@ -66,7 +69,7 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
 
 ## Who it is for
 
-Licensed amateur radio operators, and Part 90 (business band) licensees. **You need a licence
+Licensed amateur radio operators, and Part 90 (business band) licensees. **You need a license
 to transmit**, and you are responsible for following the rules of the service you operate in:
 identification, permitted content, band plan, and (on amateur bands) no encryption.
 
@@ -109,7 +112,7 @@ explanation. To do it by hand instead, skip the guide:
 
 1. On the **Status** tab press **Export ATAK data package** and share the zip to ATAK
    (choose ATAK or its Import Manager in the share sheet).
-2. ATAK adds a server connection named **TAKwave** pointing at `127.0.0.1:8087` over TCP.
+2. ATAK adds a server connection named **TAKwave** pointing at `127.0.0.1:8099` over TCP.
 3. The connection indicator in ATAK turns green, and "TAK clients" in TAKwave shows 1.
 
 <details>
@@ -132,7 +135,10 @@ takwave.pref            ATAK preference file
 | `connectString0` | `127.0.0.1:<port>:tcp` |
 
 To set it up by hand instead: ATAK > Settings > Network Preferences > TAK Servers > Add, with
-address `127.0.0.1`, port `8087`, protocol **TCP** (not SSL), no credentials.
+address `127.0.0.1`, port `8099`, protocol **TCP** (not SSL), no credentials.
+
+Do not use port 8087: ATAK has a built-in TCP input there, so ATAK would connect to itself and
+drop the link every 30 seconds or so. TAKwave refuses that port.
 
 For a TAK client on another device (for example iTAK on this phone's hotspot), turn on **Allow
 LAN clients** in TAKwave's settings and point that client at the phone's IP address. There is
@@ -151,7 +157,7 @@ With no audio interface attached TAKwave uses the phone's own speaker and microp
 5. The **Log** tab shows every packet sent and received.
 
 If nothing decodes, check the **Calibrate** tab on the receiving phone: the level bar should go
-green while the other phone transmits. Red means too loud; grey means too quiet.
+green while the other phone transmits. Red means too loud; gray means too quiet.
 
 ### 4. On the air
 
@@ -162,18 +168,18 @@ green while the other phone transmits. Red means too loud; grey means too quiet.
 - **Squelch:** open, or as loose as it goes. A tight squelch chops off the start of packets.
 - **VOX off** on the radio when using serial PTT. Battery saver / power save **off**: it
   misses the start of packets.
-- **Volume:** set once using the Calibrate tab, then leave it alone.
+- **Volume:** set once using Calibrate levels, then leave it alone.
 - Low power is plenty for testing. Use a dummy load where you can.
 
 **TAKwave settings**
 
 1. Plug in the Digirig. Android offers to open TAKwave for the USB device; accept and tick
    "always" so the permission sticks.
-2. **Settings > Audio devices:** choose the USB audio device for both input and output.
-3. **Settings > PTT:** choose *Serial (RTS/DTR)*, pick the adapter, and grant access. The
+2. **Settings (gear icon) > Radio & audio > Audio devices:** choose the USB audio device for both input and output.
+3. **Settings > Radio & audio > PTT:** choose *Serial (RTS/DTR)*, pick the adapter, and grant access. The
    Digirig keys on **RTS**, normal polarity.
 4. Restart the gateway (button at the top of Settings).
-5. **Calibrate tab:**
+5. **Calibrate levels** (*Adjust levels* on the Status screen, or Settings > Radio & audio):
    - *Receive:* open the squelch and adjust the radio's volume until the level bar is green
      (peaks between about 20% and 80%).
    - *Transmit:* send the 1200 Hz and 2200 Hz tones while listening on a second radio. Adjust
@@ -218,7 +224,11 @@ the packet will finish before the slot ends.
 ## Encryption (Part 90 only)
 
 > **Encryption is not permitted on amateur radio frequencies.** It is off by default. Turn it
-> on only where your licence allows it. Your callsign is always sent in the clear.
+> on only where your license allows it. Your callsign is sent in the clear unless you also turn
+> on **Encrypt my callsign too**: then every frame carries the shared placeholder `TAKWV-15` as
+> its AX.25 source and your callsign travels inside the ciphertext, so you must identify your
+> station by other means. All stations need a TAKwave version that reads these packets
+> (protocol version 1).
 
 | Mode | What every station loads | Use it when |
 |------|--------------------------|-------------|
@@ -255,11 +265,12 @@ Details are in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 | Symptom | Things to check |
 |---------|-----------------|
-| ATAK does not connect | Is the gateway started? Is the server in ATAK set to **TCP**, `127.0.0.1`, port 8087? Re-import the data package. |
+| ATAK does not connect | Is the gateway started? Is the server in ATAK set to **TCP**, `127.0.0.1`, port 8099 (or whatever TAKwave's Settings show)? Re-import the data package. |
+| ATAK connects and disconnects every ~30 s, even with the gateway stopped | ATAK is connected to its own input on port 8087 (the default before 0.3.1). Delete the old TAKwave server in ATAK and re-import the data package. |
 | "No valid callsign" warning | Set the callsign in Settings, then restart the gateway. |
 | Nothing is transmitted | Callsign set? Serial PTT warning on the Status tab? Is the queue growing (channel busy)? With time slots on, sends wait for your slot. |
 | Radio keys but the other side decodes nothing | TX level too high (most common), or too low. Raise TXDELAY to 400-500 ms. Turn off the radio's battery saver. |
-| Level bar stays grey | Wrong input device, cable in the wrong jack, squelch closed, or volume too low. |
+| Level bar stays gray | Wrong input device, cable in the wrong jack, squelch closed, or volume too low. |
 | Level bar red | Turn the radio volume down. |
 | RF state stuck on RX-DCD | Voice or interference on the channel. TAKwave is waiting for it to clear. |
 | Start of packets cut off | Squelch too tight, battery saver on, or TXDELAY too short for the radio (or for VOX). |
@@ -323,7 +334,7 @@ socket on the phone for TAK clients (loopback only, unless you enable LAN client
 choose the KISS backend, a connection to the TNC you configure. Nothing else leaves the device
 except what you transmit by radio, which anyone on the frequency can receive.
 
-## Acknowledgements
+## Acknowledgments
 
 - [usb-serial-for-android](https://github.com/mik3y/usb-serial-for-android) by Mike Wakerly and
   contributors (MIT)

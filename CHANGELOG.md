@@ -7,6 +7,52 @@ All notable changes to TAKwave are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-16
+
+Over-air protocol version 0, except packets sent with *Encrypt my callsign too*, which use
+version 1 (`docs/PROTOCOL.md`).
+
+### Added
+
+- **Encrypt my callsign too** (Settings > Security, off by default, only while encryption is
+  on): every frame goes out with the shared placeholder `TAKWV-15` as AX.25 source and the real
+  callsign sealed inside the encrypted payload. Uses protocol version 1 for these packets only;
+  older TAKwave versions drop them. The setting travels in team profiles. Stations must identify
+  themselves by other means while it is on.
+- **Radio guide** (Settings > Radio & audio): choose amateur (2 m / 70 cm) or Part 90 business
+  band and the terrain, and TAKwave suggests the band, the channel width (business band is
+  always 12.5 kHz), the deviation to calibrate for, frequencies to use and to stay off (ARRL
+  packet channels; the nationwide Part 90 itinerant channels), radio settings for data, and an
+  FX.25 level it can apply. US rules only. The calibration screen shows the deviation target
+  for the chosen width.
+- **Auto-PTT cable hint:** when Serial PTT is selected but only a USB sound card is attached
+  (for example the BTECH APRS-K1 PRO, which keys the radio from the audio and has no serial
+  port), Settings and the setup guide explain why and offer "Use VOX instead" (TXDELAY at least
+  500 ms), and the start-up warning says the same. Help texts mention such cables and that the
+  radio's own VOX stays off with them.
+
+### Changed
+
+- Encrypting stations keep 8 bytes of every chat free for a hidden callsign, so the longest
+  encrypted chat text is 8 bytes shorter.
+- **Local TAK server moves from port 8087 to 8099.** ATAK has its own TCP input on 8087, so
+  ATAK could connect to itself and drop the link every ~30 seconds (even with the gateway
+  stopped), or TAKwave could fail to bind. Existing installs on 8087 move to 8099
+  automatically, and 8087 can no longer be chosen. **Delete the old TAKwave server in ATAK
+  and re-import the data package.**
+- **Simpler navigation:** the tab row is gone. Status is the home screen, and the packet log,
+  Settings and About open from icons in the top bar; Back returns.
+- **Settings in groups:** Station & TAK, Radio & audio, Channel and Security, each on its own
+  page, with a summary of the current values on the Settings list.
+- **Calibration** opens from *Adjust levels* on the Status screen or from Settings > Radio &
+  audio.
+
+### Fixed
+
+- **ATAK got "connection refused"** with *Allow LAN clients* off: the server listened on the
+  IPv6 loopback `[::1]` (what Android returns for the loopback address) while ATAK connects to
+  `127.0.0.1`. It now binds `127.0.0.1`.
+
 ## [0.3.0] - 2026-11-15
 
 Over-air protocol still version 0, with additive changes only: an extension carrying hop count
@@ -20,7 +66,7 @@ predate them ignore the extension and drop emergency packets.
   and Buy Me a Coffee. Links open in the browser only when tapped.
 - **Emergency alerts:** ATAK's 911, Ring The Bell, In Contact, geo-fence and custom alerts, and
   their cancellation, go on the air ahead of all other traffic. An active alert is repeated every
-  30 s with the latest position until it is cancelled in ATAK; the cancel is sent three times.
+  30 s with the latest position until it is canceled in ATAK; the cancel is sent three times.
   Relay stations pass alerts on. Alerts heard from others show as red cards on the Status tab
   and in the notification, with distance and bearing. An old copy of an alert can never undo its
   cancellation.
@@ -110,7 +156,8 @@ First release. Over-air protocol version 0.
 
 - Not yet verified on physical phones and radios. See `docs/TODO.md`.
 
-[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/fearmikey/TAKwave/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fearmikey/TAKwave/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fearmikey/TAKwave/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/fearmikey/TAKwave/releases/tag/v0.1.0

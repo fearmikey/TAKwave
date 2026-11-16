@@ -236,6 +236,12 @@ internal fun ProfileImportDialog(container: AppContainer, settings: Settings, te
                             "amateur radio frequencies. The profile carries no keys: until you load them, TAKwave will not transmit.",
                     )
                 }
+                if (updated.callsignHidden && !settings.callsignHidden) {
+                    WarningCard(
+                        "This profile also encrypts your callsign, so your packets no longer identify your station. " +
+                            "Identify it some other way as your license requires.",
+                    )
+                }
                 if (changes.isNotEmpty()) {
                     Text(
                         "Changes take effect the next time the gateway starts.",
@@ -278,7 +284,7 @@ private fun QrCode(text: String, modifier: Modifier) {
     }
     Canvas(modifier.background(Color.White).semantics { contentDescription = "QR code of the team profile" }) {
         val cell = size.minDimension / matrix.width
-        // Round up so neighbouring modules overlap slightly instead of leaving hairline gaps.
+        // Round up so neighboring modules overlap slightly instead of leaving hairline gaps.
         val module = Size(ceil(cell), ceil(cell))
         for (y in 0 until matrix.height) {
             for (x in 0 until matrix.width) {

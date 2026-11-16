@@ -74,7 +74,7 @@ class GatewayTest {
             val out = b.onClientEvent(xml)
             assertFalse("echo accepted for RF", out.acceptedForRf)
         }
-        // Even with the <__takwave> marker stripped (another client re-serialising the event),
+        // Even with the <__takwave> marker stripped (another client re-serializing the event),
         // the uid / message id memory still blocks it.
         for (xml in delivered) {
             val out = b.onClientEvent(xml.replace("<__takwave rx=\"1\"/>", "<takv platform=\"ATAK-CIV\"/><archive/>"))
@@ -197,6 +197,56 @@ class GatewayTest {
         assertEquals("Rally at <CP2> & hold", CotParser.parse(ok.xml!!)!!.remarks)
         // A station without the key drops it.
         assertNull(b.onRfFrame(frame).xml)
+    }
+
+    @Test
+    fun aHiddenCallsignIsOnlyReadableWithTheKey() {
+        val key = "part 90 fleet key"
+        fun codec() = PacketCodec(PayloadCrypto.fromPassphrase(key.toCharArray()))
+        val hiding = Gateway(clock, Ax25Address("WQAA11"), codec(), hideSource = true)
+        val plainHeader = Gateway(clock, Ax25Address("WQBB22"), codec())
+        hiding.onClientEvent(golden("pli_atak.xml"))
+        val frame = drain(hiding).single().frame
+        val decoded = Ax25Frame.decode(frame)!!
+        // The header carries only the shared placeholder; the callsign is nowhere in the clear.
+        assertEquals(Gateway.HIDDEN_SOURCE, decoded.source)
+        assertEquals("TAKWV", decoded.destination.toString())
+        assertFalse(String(frame, Charsets.ISO_8859_1).contains("WQAA11"))
+
+        // Any station with the key reads it, hiding or not, and files it under the real callsign.
+        val rx = plainHeader.onRfFrame(frame)
+        assertNotNull(rx.xml)
+        assertEquals("WQAA11", rx.source)
+        assertTrue(rx.hiddenSource)
+        assertEquals("WQAA11", plainHeader.heardStations().single().source)
+        assertEquals("NOVA", plainHeader.heardStations().single().takCallsign)
+
+        // The sender recognizes its own echo after decrypting it.
+        val echo = hiding.onRfFrame(frame)
+        assertEquals("own transmission heard", echo.note)
+        assertEquals(RxKind.REPEAT, echo.kind)
+
+        // No key: dropped, and only the placeholder is known.
+        val keyless = b.onRfFrame(frame)
+        assertNull(keyless.xml)
+        assertEquals(Gateway.HIDDEN_SOURCE.toString(), keyless.source)
+        assertTrue(b.heardStations().isEmpty())
+    }
+
+    @Test
+    fun hidingTheCallsignRequiresEncryption() {
+        assertTrue(runCatching { Gateway(clock, Ax25Address("WQAA11"), PacketCodec(), hideSource = true) }.isFailure)
+    }
+
+    @Test
+    fun aPlaceholderFrameWithoutAStationInsideIsDropped() {
+        val key = "part 90 fleet key"
+        val codec = PacketCodec(PayloadCrypto.fromPassphrase(key.toCharArray()))
+        val rxStation = Gateway(clock, Ax25Address("WQBB22"), PacketCodec(PayloadCrypto.fromPassphrase(key.toCharArray())))
+        val payload = codec.encode(PliMessage("u", "NOVA", "a-f-G-U-C", 415_000_000, -713_000_000))
+        val frame = Ax25Frame(Gateway.DESTINATION, Gateway.HIDDEN_SOURCE, payload).encode()
+        assertNull(rxStation.onRfFrame(frame).xml)
+        assertTrue(rxStation.heardStations().isEmpty())
     }
 
     @Test

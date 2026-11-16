@@ -19,7 +19,7 @@ data class EmergencyConfig(
  * goes out at once and then a few more times.
  *
  * This only ever sends what the local TAK client reported; alerts heard on RF are passed on, if
- * at all, by [RepeatStore] on relay stations. The caller serialises access (the Gateway lock).
+ * at all, by [RepeatStore] on relay stations. The caller serializes access (the Gateway lock).
  */
 class EmergencyBeacon(private val config: EmergencyConfig = EmergencyConfig()) {
     private class Entry(var latest: EmergencyMessage, var updatedAtMs: Long, var dueAtMs: Long, var cancelsLeft: Int)
@@ -54,7 +54,7 @@ class EmergencyBeacon(private val config: EmergencyConfig = EmergencyConfig()) {
         for (e in entries.values) {
             if (nowMs < e.dueAtMs) continue
             if (!e.latest.active) {
-                // Cancelled entries stay (until forgotten) so a client repeating its cancel does not restart the count.
+                // Canceled entries stay (until forgotten) so a client repeating its cancel does not restart the count.
                 if (e.cancelsLeft <= 0) continue
                 e.cancelsLeft--
             }
