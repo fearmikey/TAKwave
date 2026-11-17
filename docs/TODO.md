@@ -17,6 +17,10 @@ has been run end to end.
 - [ ] Digirig serial PTT (RTS) and USB audio device routing on a real phone.
 - [ ] Bluetooth serial PTT against a real radio or adapter: connect, key/unkey presets, and
       behavior when the link drops mid-transmission.
+- [ ] KISS over Bluetooth against a real radio with a built-in TNC (BTECH UV-PRO): that it
+      offers KISS on the standard SPP service, connects while paired, sends and receives
+      TAKwave frames, reconnects after the radio is switched off and on, and whether its TNC
+      passes the longest frames (a full chat message, about 270 bytes) or truncates them.
 - [ ] Store and forward with three real stations, including a relay: re-send when a station
       comes into range, no duplicate messages in ATAK, and how much air time it uses on a busy
       channel.

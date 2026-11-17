@@ -1,0 +1,2 @@
+• KISS over Bluetooth: use a radio with a built-in Bluetooth KISS TNC (such as the BTECH UV-PRO) with no audio cable. Not yet tested on a real radio
+• Status screen shows when a KISS TNC link is down; connects and disconnects are logged

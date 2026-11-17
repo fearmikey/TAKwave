@@ -344,3 +344,22 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
     local coordinator. Other countries' band plans are not modeled, and the screen says so.
 107. **The data deviation target is 60% of the channel's peak deviation** (3 kHz wide, 1.5 kHz
     narrow). This matches the wide-channel figure the calibration screen already used.
+
+## KISS over Bluetooth
+
+108. **A radio with a built-in KISS TNC is its own modem backend (`KISS_BLUETOOTH`),** not a
+    Bluetooth PTT option. Radios such as the BTECH UV-PRO offer the TNC on a Bluetooth serial
+    (SPP) port and do the modulation, channel access and keying themselves, so no audio path
+    or PTT is involved, and such radios usually accept only one serial connection.
+109. **KISS runs over any byte stream.** `KissStreamTransport` in `:core` owns framing,
+    reconnecting and status reporting and is given a function that opens a `KissLink`;
+    `KissTcpTransport` is that with a TCP socket, and `:app` supplies the Bluetooth link. The
+    logic stays unit-tested without Android.
+110. **Same Bluetooth rules as PTT (65):** only an explicitly chosen, already-paired device,
+    so no scan or location permission. Without a chosen device the backend does not start.
+111. **A dropped link is retried every 5 s and frames are refused meanwhile,** rather than
+    disabling transmitting until a restart as Bluetooth PTT does (66). The difference is
+    deliberate: here the TNC keys the radio, a frame cut off mid-way is never sent, and
+    nothing can be left keyed by TAKwave. The Status screen shows "(not connected)".
+112. **The standard SPP service UUID is used.** Not verified against a real UV-PRO; if a radio
+    offers KISS on a different service, the connect step is the place to change (TODO.md).

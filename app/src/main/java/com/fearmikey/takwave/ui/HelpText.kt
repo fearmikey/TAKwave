@@ -16,8 +16,9 @@ object HelpText {
 
     const val NEARBY_DEVICES =
         "Android asks for the \"Nearby devices\" permission before an app may talk to a paired Bluetooth device.\n\n" +
-            "TAKwave only uses it for Bluetooth PTT: sending the key and unkey commands to your radio or adapter. " +
-            "It never scans for devices. Skip this if you do not use Bluetooth PTT."
+            "TAKwave only uses it for Bluetooth PTT (sending the key and unkey commands to your radio or adapter) " +
+            "and for a radio with a built-in Bluetooth TNC (exchanging packets with it). It never scans for " +
+            "devices. Skip this if you use neither."
 
     const val BATTERY =
         "Android puts apps to sleep when the screen is off to save battery. For TAKwave that means missed packets " +
@@ -42,6 +43,8 @@ object HelpText {
             "card that keys the radio when TAKwave plays audio, so the radio's own VOX stays off.\n\n" +
             "• Bluetooth serial PTT: audio still goes through a cable or USB sound card, but the radio is keyed by " +
             "a command sent over a Bluetooth serial link, for example Bluetooth CAT control.\n\n" +
+            "• Radio with built-in Bluetooth TNC: radios such as the BTECH UV-PRO contain their own packet modem. " +
+            "TAKwave exchanges packets with it over Bluetooth, with no cables at all.\n\n" +
             "• External KISS TNC: a separate modem (hardware, or software such as Dire Wolf) does everything; " +
             "TAKwave only exchanges packets with it over the network.\n\n" +
             "• No radio: two phones on a table talk to each other through speaker and microphone. Good for a " +
@@ -52,7 +55,9 @@ object HelpText {
             "Soft modem: TAKwave does it itself, using an audio device connected to the radio. This is what most " +
             "people want.\n\n" +
             "KISS over TCP: an external TNC or a program such as Dire Wolf does the modulation, channel access " +
-            "and PTT. TAKwave just hands it packets over a network connection."
+            "and PTT. TAKwave just hands it packets over a network connection.\n\n" +
+            "KISS over Bluetooth: the same, but the TNC is inside the radio (for example the BTECH UV-PRO) or is a " +
+            "Bluetooth TNC, and TAKwave reaches it over a Bluetooth serial link. No audio cable is needed."
 
     const val AUDIO =
         "Input is the sound coming from the radio's speaker or data port. Output is the sound going to the " +
@@ -101,6 +106,20 @@ object HelpText {
             "computer listens on port 8001 by default; use 127.0.0.1 when it runs on this phone.\n\n" +
             "The TNC is responsible for audio levels, PTT and channel access, so TAKwave's audio, PTT and " +
             "transmit settings are not used."
+
+    const val KISS_BLUETOOTH =
+        "Some radios, such as the BTECH UV-PRO, have a packet modem (KISS TNC) built in and offer it over " +
+            "Bluetooth. TAKwave then needs no audio cable: it hands packets to the radio, and the radio does the " +
+            "modulation, waits for a clear channel and keys itself.\n\n" +
+            "1. Pair the radio in Android's Bluetooth settings.\n" +
+            "2. Switch the radio's KISS TNC on (in the radio's menu or its companion app), and tune it to the " +
+            "team's frequency.\n" +
+            "3. Choose the radio here.\n\n" +
+            "Most radios accept only one Bluetooth serial connection, so close the radio's companion app and any " +
+            "other packet app while TAKwave is running. If the link drops, TAKwave reconnects on its own; packets " +
+            "are not sent while it is down.\n\n" +
+            "The radio's TNC works at 1200 baud without FX.25, which every TAKwave station can read. TAKwave's " +
+            "audio, PTT, transmit, FX.25 and time slot settings are not used."
 
     const val TRANSMIT =
         "TXDELAY is the pause between keying the radio and sending data. Radios need a moment to reach full " +

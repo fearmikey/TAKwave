@@ -148,6 +148,8 @@ private fun SettingsPage.summary(s: Settings): Pair<String, Boolean> = when (thi
         ModemBackend.SOFT -> "Soft modem, PTT: ${s.pttMethod.label}" to false
         ModemBackend.KISS_TCP ->
             "KISS TNC at ${s.kissHost.ifBlank { "(no host)" }}:${s.kissPort}" to s.kissHost.isBlank()
+        ModemBackend.KISS_BLUETOOTH ->
+            (if (s.kissBtDevice.isEmpty()) "KISS TNC over Bluetooth, no device chosen" else "KISS TNC over Bluetooth") to s.kissBtDevice.isEmpty()
     }
     SettingsPage.CHANNEL -> {
         val parts = buildList {
@@ -313,6 +315,10 @@ private fun RadioPage(
                         "transmit and channel access settings are not shown.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+            if (settings.backend == ModemBackend.KISS_BLUETOOTH) {
+                Spacer(Modifier.height(8.dp))
+                BluetoothKissSettings(settings) { update(it) }
             }
         }
 
@@ -578,9 +584,13 @@ internal fun SerialPttSettings(
     ) { v -> update { it.copy(pttInverted = v) } }
 }
 
-/** Paired device and key/unkey commands for Bluetooth serial PTT. Shared by Settings and the setup guide. */
+/**
+ * Picks one of the already-paired Bluetooth devices by MAC address, asking for the Nearby devices
+ * permission when needed. [chooseHint] is shown while nothing is selected. Used for Bluetooth PTT
+ * and for a Bluetooth KISS TNC.
+ */
 @Composable
-internal fun BluetoothPttSettings(settings: Settings, update: ((Settings) -> Settings) -> Unit) {
+internal fun BluetoothDevicePicker(selected: String, chooseHint: String, onSelect: (String) -> Unit) {
     val context = LocalContext.current
     // Re-read the paired devices after a permission prompt or a trip to the system settings.
     var tick by remember { mutableIntStateOf(0) }
@@ -602,19 +612,19 @@ internal fun BluetoothPttSettings(settings: Settings, update: ((Settings) -> Set
     } else {
         val choices = buildList {
             devices.forEach { add(it.address to it.label) }
-            if (settings.btPttDevice.isNotEmpty() && devices.none { it.address == settings.btPttDevice }) {
-                add(settings.btPttDevice to "${settings.btPttDevice} (not paired)")
+            if (selected.isNotEmpty() && devices.none { it.address == selected }) {
+                add(selected to "$selected (not paired)")
             }
         }
-        ChoiceSetting(choices, settings.btPttDevice) { v -> update { it.copy(btPttDevice = v) } }
+        ChoiceSetting(choices, selected) { v -> onSelect(v) }
         if (devices.isEmpty()) {
             Text(
                 "No paired devices, or Bluetooth is off. Pair the radio or adapter in Android's Bluetooth settings first.",
                 style = MaterialTheme.typography.bodySmall,
                 color = WarnAmber,
             )
-        } else if (settings.btPttDevice.isEmpty()) {
-            Text("Choose the device that keys your radio.", style = MaterialTheme.typography.bodySmall, color = WarnAmber)
+        } else if (selected.isEmpty()) {
+            Text(chooseHint, style = MaterialTheme.typography.bodySmall, color = WarnAmber)
         }
     }
     OutlinedButton(onClick = {
@@ -624,6 +634,26 @@ internal fun BluetoothPttSettings(settings: Settings, update: ((Settings) -> Set
             // No Bluetooth settings screen on this device.
         }
     }) { Text("Open Bluetooth settings") }
+}
+
+/** Paired radio or TNC that speaks KISS over Bluetooth serial. Shared by Settings and the setup guide. */
+@Composable
+internal fun BluetoothKissSettings(settings: Settings, update: ((Settings) -> Settings) -> Unit) {
+    BluetoothDevicePicker(settings.kissBtDevice, "Choose the radio or TNC.") { v -> update { it.copy(kissBtDevice = v) } }
+    Text(
+        "For a radio with a built-in KISS TNC, such as the BTECH UV-PRO, or a Bluetooth TNC. Pair it in Android's " +
+            "Bluetooth settings, switch its KISS TNC on, and close any other app that is connected to it. The " +
+            "radio does the modulation, channel access and PTT, so no audio cable is needed and the audio, PTT, " +
+            "transmit and channel access settings are not shown.",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/** Paired device and key/unkey commands for Bluetooth serial PTT. Shared by Settings and the setup guide. */
+@Composable
+internal fun BluetoothPttSettings(settings: Settings, update: ((Settings) -> Settings) -> Unit) {
+    BluetoothDevicePicker(settings.btPttDevice, "Choose the device that keys your radio.") { v -> update { it.copy(btPttDevice = v) } }
 
     Spacer(Modifier.height(8.dp))
     Text("Commands", style = MaterialTheme.typography.labelLarge)

@@ -70,6 +70,10 @@ private enum class RadioSetup(val label: String, val detail: String) {
         "Bluetooth serial PTT",
         "Audio through a cable or USB sound card; the radio is keyed by a command over a Bluetooth serial link.",
     ),
+    BLUETOOTH_TNC(
+        "Radio with built-in Bluetooth TNC",
+        "A radio such as the BTECH UV-PRO does the modem work itself. TAKwave sends it packets over Bluetooth; no cables.",
+    ),
     KISS_TNC(
         "External KISS TNC",
         "A hardware TNC or Dire Wolf does the modem work. TAKwave connects to it over TCP.",
@@ -98,7 +102,7 @@ private fun stepsFor(setup: RadioSetup?): List<Step> = buildList {
             add(Step.AUDIO)
             add(Step.TRANSMIT)
         }
-        RadioSetup.KISS_TNC -> add(Step.KISS)
+        RadioSetup.KISS_TNC, RadioSetup.BLUETOOTH_TNC -> add(Step.KISS)
         RadioSetup.ACOUSTIC, null -> {}
     }
     add(Step.DONE)
@@ -110,6 +114,7 @@ private fun applySetup(s: Settings, setup: RadioSetup): Settings = when (setup) 
     // VOX needs time to trip before data starts.
     RadioSetup.VOX_CABLE -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.VOX, txDelayMs = maxOf(s.txDelayMs, VOX_MIN_TX_DELAY_MS))
     RadioSetup.BLUETOOTH -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.BLUETOOTH)
+    RadioSetup.BLUETOOTH_TNC -> s.copy(backend = ModemBackend.KISS_BLUETOOTH)
     RadioSetup.KISS_TNC -> s.copy(backend = ModemBackend.KISS_TCP)
     RadioSetup.ACOUSTIC -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.VOX, inputDevice = "", outputDevice = "")
 }
@@ -229,7 +234,12 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
                             ) { update(it) }
                         }
                     }
-                    Step.KISS -> {
+                    Step.KISS -> if (setup == RadioSetup.BLUETOOTH_TNC) {
+                        StepHeader("Bluetooth TNC", "Choose the paired radio. Pair it in Android's Bluetooth settings first.")
+                        Section("KISS over Bluetooth", info = HelpText.KISS_BLUETOOTH) {
+                            BluetoothKissSettings(settings) { update(it) }
+                        }
+                    } else {
                         StepHeader("KISS TNC", "Where does the TNC accept KISS connections?")
                         Section("KISS over TCP", info = HelpText.KISS) {
                             TextSetting(
@@ -327,7 +337,7 @@ private fun PermissionsPage() {
         PermissionCard(
             title = "Nearby devices (Bluetooth)",
             info = HelpText.NEARBY_DEVICES,
-            summary = "Only for Bluetooth PTT. Skip it if your radio is keyed another way.",
+            summary = "Only for Bluetooth PTT or a radio with a built-in Bluetooth TNC. Skip it otherwise.",
             granted = remember(tick) { granted(context, Manifest.permission.BLUETOOTH_CONNECT) },
             onGrant = { launcher.launch(Manifest.permission.BLUETOOTH_CONNECT) },
         )
@@ -428,6 +438,11 @@ private fun DonePage(settings: Settings, setup: RadioSetup?) {
         Text("Radio: ${setup?.label ?: "not chosen"}", style = MaterialTheme.typography.bodyMedium)
         if (settings.backend == ModemBackend.SOFT) {
             Text("PTT: ${settings.pttMethod.label}", style = MaterialTheme.typography.bodyMedium)
+        } else if (settings.backend == ModemBackend.KISS_BLUETOOTH) {
+            Text(
+                if (settings.kissBtDevice.isEmpty()) "TNC: no Bluetooth device chosen yet" else "TNC: Bluetooth ${settings.kissBtDevice}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
         } else {
             Text("TNC: ${settings.kissHost}:${settings.kissPort}", style = MaterialTheme.typography.bodyMedium)
         }

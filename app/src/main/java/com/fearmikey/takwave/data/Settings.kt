@@ -38,6 +38,7 @@ enum class BtPttPreset(val label: String, val key: String, val unkey: String) {
 enum class ModemBackend(val label: String) {
     SOFT("Soft modem (audio)"),
     KISS_TCP("KISS over TCP"),
+    KISS_BLUETOOTH("KISS over Bluetooth (radio with built-in TNC)"),
 }
 
 enum class EncryptionMode(val label: String) {
@@ -107,6 +108,8 @@ data class Settings(
     val backend: ModemBackend = ModemBackend.SOFT,
     val kissHost: String = "127.0.0.1",
     val kissPort: Int = 8001,
+    /** MAC address of the paired radio or TNC that speaks KISS over Bluetooth serial; empty means none chosen. */
+    val kissBtDevice: String = "",
     val encryption: EncryptionMode = EncryptionMode.OFF,
     val cipher: CipherChoice = CipherChoice.AES_GCM,
     val passphrase: String = "",
@@ -213,6 +216,7 @@ class SettingsStore(context: Context) {
             backend = enumOf(p[BACKEND], d.backend),
             kissHost = p[KISS_HOST] ?: d.kissHost,
             kissPort = p[KISS_PORT] ?: d.kissPort,
+            kissBtDevice = p[KISS_BT_DEVICE] ?: d.kissBtDevice,
             encryption = enumOf(p[ENCRYPTION], d.encryption),
             cipher = enumOf(p[CIPHER], d.cipher),
             passphrase = p[PASSPHRASE] ?: d.passphrase,
@@ -266,6 +270,7 @@ class SettingsStore(context: Context) {
         p[BACKEND] = s.backend.name
         p[KISS_HOST] = s.kissHost
         p[KISS_PORT] = s.kissPort
+        p[KISS_BT_DEVICE] = s.kissBtDevice
         p[ENCRYPTION] = s.encryption.name
         p[CIPHER] = s.cipher.name
         p[PASSPHRASE] = s.passphrase
@@ -317,6 +322,7 @@ class SettingsStore(context: Context) {
         val BACKEND = stringPreferencesKey("backend")
         val KISS_HOST = stringPreferencesKey("kiss_host")
         val KISS_PORT = intPreferencesKey("kiss_port")
+        val KISS_BT_DEVICE = stringPreferencesKey("kiss_bt_device")
         val ENCRYPTION = stringPreferencesKey("encryption")
         val PASSPHRASE = stringPreferencesKey("passphrase")
         val CIPHER = stringPreferencesKey("cipher")

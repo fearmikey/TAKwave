@@ -14,7 +14,7 @@
         android:required="false" />
 
     <!--
-        Bluetooth serial PTT. Only already-paired devices are used, so no scan or location
+        Bluetooth serial PTT, and KISS to a radio with a built-in TNC. Only already-paired devices are used, so no scan or location
         permission is needed. BLUETOOTH is the pre-Android 12 equivalent of BLUETOOTH_CONNECT.
     -->
     <uses-permission

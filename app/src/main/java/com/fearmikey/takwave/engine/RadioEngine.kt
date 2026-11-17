@@ -20,6 +20,8 @@ import com.fearmikey.takwave.core.gateway.TxKind
 import com.fearmikey.takwave.core.sched.RepeatConfig
 import com.fearmikey.takwave.core.gateway.summary
 import com.fearmikey.takwave.core.io.FrameTransport
+import com.fearmikey.takwave.core.io.KissLink
+import com.fearmikey.takwave.core.io.KissStreamTransport
 import com.fearmikey.takwave.core.io.KissTcpTransport
 import com.fearmikey.takwave.core.io.ModemConfig
 import com.fearmikey.takwave.core.io.NoPtt
@@ -43,6 +45,7 @@ import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.PttMethod
 import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.net.CotServer
+import com.fearmikey.takwave.ptt.BluetoothDevices
 import com.fearmikey.takwave.ptt.BluetoothPtt
 import com.fearmikey.takwave.ptt.SerialDevices
 import com.fearmikey.takwave.ptt.SerialPtt
@@ -88,6 +91,8 @@ class RadioEngine(
     private var server: CotServer? = null
     private var transport: FrameTransport? = null
     private var softModem: SoftModemTransport? = null
+    /** The KISS link (TCP or Bluetooth) when a TNC is the backend, to show whether it is up. */
+    @Volatile private var kiss: KissStreamTransport? = null
     private var audioSource: AndroidAudioSource? = null
     private var audioSink: AndroidAudioSink? = null
     private var serialPtt: SerialPtt? = null
@@ -197,8 +202,9 @@ class RadioEngine(
                     ModemBackend.KISS_TCP -> {
                         backendInfo = "KISS TNC ${settings.kissHost}:${settings.kissPort}"
                         if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is set up in the TNC itself when using KISS; the FX.25 setting is not used.")
-                        KissTcpTransport(settings.kissHost, settings.kissPort)
+                        KissTcpTransport(settings.kissHost, settings.kissPort, onStatus = { info(it) }).also { kiss = it }
                     }
+                    ModemBackend.KISS_BLUETOOTH -> buildBluetoothKiss()
                 }
             } catch (e: Exception) {
                 warn("Radio interface failed to start: ${e.message}")
@@ -288,6 +294,30 @@ class RadioEngine(
                 fx25CheckBytes = settings.fx25.checkBytes,
             ),
         ).also { softModem = it }
+    }
+
+    /**
+     * A radio with a built-in KISS TNC (for example the BTECH UV-PRO) or a Bluetooth TNC, reached
+     * over a Bluetooth serial link. The TNC keys the radio itself, so there is no PTT to manage
+     * here: a frame cut off by a dropped link is never sent.
+     */
+    private fun buildBluetoothKiss(): FrameTransport {
+        val address = settings.kissBtDevice
+        check(address.isNotEmpty()) { "no Bluetooth TNC has been chosen (Settings > Radio & audio)" }
+        if (!BluetoothDevices.hasPermission(context)) {
+            warn("The Nearby devices (Bluetooth) permission has not been granted, so the Bluetooth TNC cannot be reached.")
+        }
+        val label = BluetoothDevices.paired(context).firstOrNull { it.address == address }?.label ?: address
+        backendInfo = "KISS TNC over Bluetooth: $label"
+        if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is up to the TNC when using KISS; the FX.25 setting is not used.")
+        return KissStreamTransport("Bluetooth TNC $label", onStatus = { info(it) }) {
+            val socket = BluetoothDevices.connectSerial(context, address)
+            object : KissLink {
+                override val input = socket.inputStream
+                override val output = socket.outputStream
+                override fun close() = socket.close()
+            }
+        }.also { kiss = it }
     }
 
     private fun buildSlots(): SlotConfig? {
@@ -483,7 +513,7 @@ class RadioEngine(
             localPosition = gw?.localPosition,
             softModem = softModem != null,
             txTimeoutS = settings.txTimeoutS,
-            backendInfo = backendInfo,
+            backendInfo = backendInfo + if (kiss?.connected == false) " (not connected)" else "",
             cipherInfo = cipherInfo,
             slotInfo = if (slotInfo.isEmpty()) "" else "$slotInfo; $timeInfo",
             warnings = synchronized(warnings) { warnings.toList() },

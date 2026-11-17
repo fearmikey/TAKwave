@@ -92,8 +92,10 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !granted(context, Manifest.permission.POST_NOTIFICATIONS)) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
-            // Optional here: without it the engine reports that Bluetooth PTT is unavailable and does not transmit.
-            if (settings.backend == ModemBackend.SOFT && settings.pttMethod == PttMethod.BLUETOOTH &&
+            // Optional here: without it the engine reports that the Bluetooth PTT or TNC is unavailable and does not transmit.
+            val usesBluetooth = settings.backend == ModemBackend.KISS_BLUETOOTH ||
+                (settings.backend == ModemBackend.SOFT && settings.pttMethod == PttMethod.BLUETOOTH)
+            if (usesBluetooth &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !granted(context, Manifest.permission.BLUETOOTH_CONNECT)
             ) {
                 add(Manifest.permission.BLUETOOTH_CONNECT)

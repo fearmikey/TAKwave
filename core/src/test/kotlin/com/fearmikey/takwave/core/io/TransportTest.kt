@@ -178,6 +178,55 @@ class TransportTest {
     }
 
     @Test
+    fun kissStreamTransportReconnectsAndReportsTheLink() {
+        // What the TNC end of each link sees and sends; a link is handed out on the second attempt.
+        val fromApp = java.io.PipedInputStream(4096)
+        val toApp = java.io.PipedOutputStream()
+        val attempts = AtomicInteger()
+        val closed = AtomicInteger()
+        val statuses = LinkedBlockingQueue<String>()
+        val t = KissStreamTransport("Test TNC", reconnectDelayMs = 20, onStatus = { statuses.add(it) }) {
+            if (attempts.incrementAndGet() == 1) error("radio is switched off")
+            object : KissLink {
+                override val input = java.io.PipedInputStream(toApp, 4096)
+                override val output = java.io.PipedOutputStream(fromApp)
+                override fun close() { closed.incrementAndGet(); input.close() }
+            }
+        }
+        val received = LinkedBlockingQueue<ByteArray>()
+        t.start { received.add(it) }
+        try {
+            assertEquals("Test TNC: radio is switched off", statuses.poll(5, TimeUnit.SECONDS))
+            assertEquals("Test TNC: connected", statuses.poll(5, TimeUnit.SECONDS))
+            assertTrue(t.connected)
+
+            toApp.write(Kiss.encode(frame(2)))
+            toApp.flush()
+            assertArrayEquals(frame(2), received.poll(5, TimeUnit.SECONDS))
+
+            assertTrue(t.lastError, t.send(frame(3)))
+            assertTrue(t.lastAirtimeMs > 0)
+            val got = LinkedBlockingQueue<ByteArray>()
+            val dec = KissDecoder { got.add(it) }
+            val buf = ByteArray(1024)
+            while (got.isEmpty()) {
+                val n = fromApp.read(buf)
+                if (n < 0) break
+                dec.feed(buf, 0, n)
+            }
+            assertArrayEquals(frame(3), got.poll())
+        } finally {
+            t.close()
+        }
+        val deadline = System.currentTimeMillis() + 5_000
+        while (t.connected && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertFalse(t.connected)
+        assertTrue(closed.get() >= 1)
+        assertFalse("send after close must fail", t.send(frame(4)))
+        assertTrue(t.lastError!!.contains("not connected"))
+    }
+
+    @Test
     fun kissTcpTransportTalksToATnc() {
         ServerSocket(0).use { server ->
             val t = KissTcpTransport("127.0.0.1", server.localPort, reconnectDelayMs = 50)

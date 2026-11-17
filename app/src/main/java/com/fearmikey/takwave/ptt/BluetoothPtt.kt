@@ -38,6 +38,33 @@ object BluetoothDevices {
             emptyList()
         }
     }
+
+    /** The standard Serial Port Profile service. */
+    private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+    /**
+     * Opens a serial (SPP) link to the paired device with MAC [address]: for PTT commands, or
+     * for KISS frames to a radio with a built-in TNC. Blocks for several seconds, so call it off
+     * the main thread. Throws [IllegalStateException] with a user-readable message when the link
+     * cannot be set up.
+     */
+    @SuppressLint("MissingPermission") // Checked by hasPermission() below.
+    fun connectSerial(context: Context, address: String): BluetoothSocket {
+        check(address.isNotEmpty()) { "no Bluetooth device has been chosen" }
+        check(hasPermission(context)) { "the Nearby devices (Bluetooth) permission has not been granted" }
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: error("this phone has no Bluetooth")
+        check(adapter.isEnabled) { "Bluetooth is switched off" }
+        val device = adapter.bondedDevices.orEmpty().firstOrNull { it.address == address }
+            ?: error("the chosen Bluetooth device is no longer paired")
+        val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+        try {
+            socket.connect()
+        } catch (e: IOException) {
+            try { socket.close() } catch (ignored: Exception) { /* best effort */ }
+            error("could not connect to ${device.name ?: address} (is it switched on, in range, and offering a serial port?)")
+        }
+        return socket
+    }
 }
 
 /**
@@ -110,9 +137,6 @@ class BluetoothPtt private constructor(
     }
 
     companion object {
-        /** The standard Serial Port Profile service. */
-        private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-
         /**
          * Connects to the paired device with MAC [address]. Blocks for several seconds, so call
          * it off the main thread. Throws [IllegalStateException] with a user-readable message
@@ -126,19 +150,7 @@ class BluetoothPtt private constructor(
             unkeyCommand: ByteArray,
             onLost: () -> Unit,
         ): BluetoothPtt {
-            check(address.isNotEmpty()) { "no Bluetooth device has been chosen" }
-            check(BluetoothDevices.hasPermission(context)) { "the Nearby devices (Bluetooth) permission has not been granted" }
-            val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: error("this phone has no Bluetooth")
-            check(adapter.isEnabled) { "Bluetooth is switched off" }
-            val device = adapter.bondedDevices.orEmpty().firstOrNull { it.address == address }
-                ?: error("the chosen Bluetooth device is no longer paired")
-            val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-            try {
-                socket.connect()
-            } catch (e: IOException) {
-                try { socket.close() } catch (ignored: Exception) { /* best effort */ }
-                error("could not connect to ${device.name ?: address} (is it switched on, in range, and offering a serial port?)")
-            }
+            val socket = BluetoothDevices.connectSerial(context, address)
             val ptt = BluetoothPtt(socket, keyCommand, unkeyCommand, onLost)
             try {
                 // Start from a known state: receive.

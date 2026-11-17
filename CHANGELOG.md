@@ -7,6 +7,21 @@ All notable changes to TAKwave are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-16
+
+### Added
+
+- **KISS over Bluetooth** (Settings > Radio & audio > Modem backend, and a new choice in the
+  setup guide): use a radio with a built-in Bluetooth KISS TNC, such as the BTECH UV-PRO, with
+  no audio cable. TAKwave exchanges packets with the paired radio over a Bluetooth serial link
+  and the radio does the modulation, channel access and keying. The link reconnects on its
+  own. Not yet tested against a real radio.
+
+### Changed
+
+- With a KISS TNC (TCP or Bluetooth), the Status screen shows "(not connected)" while the link
+  is down, and connects and disconnects are written to the log.
+
 ## [0.3.1] - 2026-11-16
 
 Over-air protocol version 0, except packets sent with *Encrypt my callsign too*, which use
@@ -156,7 +171,8 @@ First release. Over-air protocol version 0.
 
 - Not yet verified on physical phones and radios. See `docs/TODO.md`.
 
-[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/fearmikey/TAKwave/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/fearmikey/TAKwave/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fearmikey/TAKwave/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fearmikey/TAKwave/compare/v0.1.0...v0.2.0
