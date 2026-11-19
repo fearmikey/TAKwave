@@ -51,18 +51,20 @@ has been run end to end.
       and whether the radio passes UDP to port 50125 from the air to the phone. Also whether
       the phone powers the radio's USB side or needs a powered OTG hub, and whether CPS-style
       radio management on the same link (port 8675) interferes.
-- [ ] MOTOTRBO (XPR 6550 or later) on USB: that the programming cable enumerates on Android as
-      RNDIS (or CDC-ECM) with vendor 0x0CAD, and what product id and product name it reports
-      (for `DetectedRadio.systemOf`; until then an unrecognised name asks the operator); that
-      `Rndis.initialize` succeeds; that the radio's DHCP server hands out 192.168.10.2 and names
-      itself as router; that a datagram to 225.0.0.1 sent to the radio's MAC goes out as a group
-      data call and reaches a second radio's phone with "Forward to PC" on, and in what form
+- [ ] MOTOTRBO (XPR 6550 or later) on USB. Seen on Linux: the XPR 6550 enumerates as 0cad:1020,
+      product name "Motorola Solutions LTD Device", full speed, interface 0 CDC 02/02/FF (RNDIS,
+      interrupt EP 0x81) and interface 1 CDC data (bulk 0x82 in, 0x03 out, 64 bytes); the kernel's
+      `rndis_host` binds to it. `DetectedRadio.systemOf` now treats product id 0x1020 as
+      MOTOTRBO. Still to check: the same on Android; that `Rndis.initialize` succeeds; which
+      addresses the radio's DHCP server hands out (the Linux PC's interface ended up in
+      192.168.99.0/24, not the 192.168.10.x default) and that it names itself as router; that a
+      datagram to 225.0.0.1 sent to the radio's MAC goes out as a group data call and reaches a second radio's phone with "Forward to PC" on, and in what form
       (destination 225.x.y.z or rewritten to the phone's address; source the sender's 12.x.y.z);
       which of the three talkgroup delivery settings the radio accepts; how the compressed
       UDP header setting affects it; real throughput and delay, to tune the 1.2 kbit/s / 500 ms
       pacing; and how lossy unconfirmed group data is. Also whether CPS on the same link or ARS
-      interfere. The owner's XPR 6550 did not enumerate on two Linux PCs during
-      development (cable or side-connector fault suspected), so none of this has been seen yet.
+      interfere. (The XPR 6550 first failed to enumerate at all on two Linux PCs; it later
+      came up, so check the cable seating if a radio stays silent on USB.)
 - [ ] Hytera DMR on USB: that the cable enumerates as RNDIS or CDC-ECM on Android, its USB ids,
       DHCP behaviour, the real data forwarding setting names, and whether the radio and
       talkgroup networks really default to 10 and 225 and route group data like MOTOTRBO.

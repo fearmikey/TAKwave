@@ -91,17 +91,21 @@ class MainActivity : ComponentActivity() {
         if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
         val device = IntentCompat.getParcelableExtra(intent, UsbManager.EXTRA_DEVICE, UsbDevice::class.java) ?: return
         if (!SerialLinks.isMotorolaRadio(device)) return
-        val label = device.productName?.takeIf { it.isNotBlank() } ?: "Motorola radio (%04x)".format(device.productId)
         val link = when {
             UsbNetDevices.framingOf(device) != null -> DetectedRadio.Link.USB_NETWORK
             UsbSerialProber.getDefaultProber().probeDevice(device) != null -> DetectedRadio.Link.SERIAL
             else -> DetectedRadio.Link.NONE
         }
+        val system = DetectedRadio.systemOf(device.productId, device.productName, link)
+        val label = when {
+            device.productId == DetectedRadio.MOTOTRBO_PORTABLE_PRODUCT_ID -> "MOTOTRBO portable"
+            else -> device.productName?.takeIf { it.isNotBlank() } ?: "Motorola radio (%04x)".format(device.productId)
+        }
         container.detectedRadio.value = DetectedRadio(
             deviceKey = SerialDevices.keyOf(device),
             label = label,
             link = link,
-            system = DetectedRadio.systemOf(device.productName, link),
+            system = system,
         )
     }
 

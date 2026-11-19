@@ -30,11 +30,19 @@ data class DetectedRadio(val deviceKey: String, val label: String, val link: Lin
 
     companion object {
         /**
-         * Guesses the radio family from its USB product name. A serial link is always P25 (MOTOTRBO
-         * radios have no USB serial data port). Unverified against real descriptors (docs/TODO.md).
+         * Motorola's USB product id for MOTOTRBO portables (seen on an XPR 6550, which reports the
+         * product name "Motorola Solutions LTD Device", so the name alone does not identify it).
          */
-        fun systemOf(productName: String?, link: Link): System {
+        const val MOTOTRBO_PORTABLE_PRODUCT_ID = 0x1020
+
+        /**
+         * Guesses the radio family from its USB product id, then its product name. A serial link is
+         * always P25 (MOTOTRBO radios have no USB serial data port). Only the MOTOTRBO portable id has
+         * been checked against a real radio (docs/TODO.md).
+         */
+        fun systemOf(productId: Int, productName: String?, link: Link): System {
             if (link == Link.SERIAL) return System.P25
+            if (productId == MOTOTRBO_PORTABLE_PRODUCT_ID) return System.DMR
             val name = productName?.uppercase() ?: return System.UNKNOWN
             return when {
                 "TRBO" in name || "XPR" in name || "DMR" in name -> System.DMR
