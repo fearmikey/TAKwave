@@ -8,7 +8,7 @@
 Positions, chat and map markers between ATAK users with no cell service, no mesh hardware and no ATAK plugin.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.2-blue" alt="Version 0.3.2">
+  <img src="https://img.shields.io/badge/version-0.4.0-blue" alt="Version 0.4.0">
   <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" alt="License GPL-3.0-or-later">
   <img src="https://img.shields.io/badge/Android-10%2B-brightgreen" alt="Android 10+">
   <img src="https://img.shields.io/badge/100%25-FOSS-orange" alt="100% FOSS">
@@ -32,7 +32,7 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
  ATAK ◄──TCP── TAKwave ◄── CoT XML rebuilt ◄── AX.25 ◄── AFSK audio ◄── radio ((((
 ```
 
-> **Status: 0.3.2.** The protocol, modem and gateway logic are covered by a unit
+> **Status: 0.4.0.** The protocol, modem and gateway logic are covered by a unit
 > test suite, and the app builds for debug and release. It has **not yet been tested on real
 > phones and radios**; see [docs/TODO.md](docs/TODO.md). Treat it as a beta.
 
@@ -60,9 +60,13 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
 - **Radio safe.** Refuses to transmit without a callsign, never re-sends what it heard, and a
   watchdog force-releases PTT.
 - **Hardware you may already own.** A Digirig (or any USB sound card with a serial PTT line), a
-  VOX cable, PTT by command over a Bluetooth serial link, a radio with a built-in Bluetooth
-  KISS TNC (such as the BTECH UV-PRO), an external KISS TNC, or nothing at all for a
-  speaker-to-microphone test.
+  VOX cable, PTT by command over a Bluetooth serial link (presets include Kenwood TH-D74/TH-D75
+  and Icom IC-705), a radio or TNC with built-in Bluetooth KISS, classic or Bluetooth LE (such
+  as the BTECH UV-PRO or a Mobilinkd TNC4), an external KISS TNC, a digital P25 radio with packet
+  data (such as a Motorola XTS 2500), a MOTOTRBO or Hytera DMR radio (such as an XPR 6550), or
+  an Icom D-STAR or Kenwood/Icom NXDN radio's data port, using the radio's own modem, or nothing
+  at all for a speaker-to-microphone test. Pick a paired radio TAKwave knows and it explains
+  how best to use it and sets it up with one tap.
 - **Optional payload encryption for Part 90 use**, with passphrase, key-file, and public-key
   options. Off by default; **not legal on amateur bands**.
 - **100% free software.** No Google Play Services, no analytics, no network access beyond the
@@ -86,11 +90,22 @@ identification, permitted content, band plan, and (on amateur bands) no encrypti
 
 Alternatives: a simple audio cable with the radio's VOX; an audio cable plus Bluetooth serial
 PTT (a radio or adapter that takes CAT or other key/unkey commands over Bluetooth SPP; radios
-that only pair with a Bluetooth earpiece are not supported); a radio with a built-in KISS TNC
-on Bluetooth, such as the BTECH UV-PRO, with no cables at all (KISS over Bluetooth; not yet
-tested on a real radio); an external TNC or
-[Dire Wolf](https://github.com/wb2osz/direwolf) reached over KISS TCP; or no hardware at all
-for the acoustic test below.
+that only pair with a Bluetooth earpiece are not supported); a radio or TNC with built-in KISS
+on Bluetooth, such as the BTECH UV-PRO, or a Bluetooth LE TNC such as the Mobilinkd TNC4, with
+no cables at all (KISS over Bluetooth, classic or LE; not yet tested on a real radio or TNC);
+an external TNC or
+[Dire Wolf](https://github.com/wb2osz/direwolf) reached over KISS TCP; a P25 radio with the
+APCO packet data option, either an APX portable (APX 6000, APX 8000) on its USB cable with an
+OTG adapter, or an ASTRO 25 radio such as the XTS 2500 on its serial data cable and a
+USB-to-RS-232 adapter or a Bluetooth serial adapter, which carries TAKwave's packets as IP datagrams over the radio's own
+P25 modem (P25 radio packet data; not yet tested on a real radio, see
+[docs/PROTOCOL.md](docs/PROTOCOL.md) section 10; other makers' P25 radios with IP packet data
+too); a MOTOTRBO or Hytera DMR radio on its USB programming cable with an OTG adapter, which
+carries the packets as DMR data calls to a talkgroup (amateur DMR radios such as AnyTone cannot
+pass data to a phone and are used in analog FM instead); an Icom D-STAR radio (IC-705, ID-52,
+IC-9700) in DV data mode, or a Kenwood NX / Icom IDAS NXDN radio with transparent data, reached
+over USB serial or Bluetooth serial (all of these not yet tested on a real radio); or no
+hardware at all for the acoustic test below.
 
 ## Install
 
@@ -334,8 +349,11 @@ Documentation:
 
 TAKwave has no accounts, analytics, ads, crash reporting or cloud services. It opens a TCP
 socket on the phone for TAK clients (loopback only, unless you enable LAN clients) and, if you
-choose a KISS backend, a connection to the TNC you configure (TCP, or a Bluetooth serial link
-to a paired radio). Nothing else leaves the device
+choose a KISS backend, a connection to the TNC you configure (TCP, or a Bluetooth serial or
+Bluetooth LE link to a paired radio or TNC, or the serial or Bluetooth link to a D-STAR or NXDN
+radio). With a P25 or
+DMR radio, the IP link to the radio runs entirely inside TAKwave over the USB cable; Android's
+network stack is not involved. Nothing else leaves the device
 except what you transmit by radio, which anyone on the frequency can receive.
 
 ## Acknowledgments

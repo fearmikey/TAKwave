@@ -12,10 +12,19 @@
     <uses-feature
         android:name="android.hardware.bluetooth"
         android:required="false" />
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+    <!-- Finding Bluetooth LE TNCs through the system's device chooser (CompanionDeviceManager). -->
+    <uses-feature
+        android:name="android.software.companion_device_setup"
+        android:required="false" />
 
     <!--
-        Bluetooth serial PTT, and KISS to a radio with a built-in TNC. Only already-paired devices are used, so no scan or location
-        permission is needed. BLUETOOTH is the pre-Android 12 equivalent of BLUETOOTH_CONNECT.
+        Bluetooth serial PTT, KISS to a radio or TNC (classic serial or Bluetooth LE), and digital radio data links.
+        Only already-paired devices, or Bluetooth LE TNCs the operator picked in the system's companion device
+        chooser, are used, so no scan or location permission is needed. BLUETOOTH is the pre-Android 12
+        equivalent of BLUETOOTH_CONNECT.
     -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"

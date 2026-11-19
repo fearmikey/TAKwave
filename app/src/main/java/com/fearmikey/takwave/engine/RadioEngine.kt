@@ -25,6 +25,11 @@ import com.fearmikey.takwave.core.io.KissStreamTransport
 import com.fearmikey.takwave.core.io.KissTcpTransport
 import com.fearmikey.takwave.core.io.ModemConfig
 import com.fearmikey.takwave.core.io.NoPtt
+import com.fearmikey.takwave.core.io.P25DataConfig
+import com.fearmikey.takwave.core.io.P25DataTransport
+import com.fearmikey.takwave.core.io.P25Line
+import com.fearmikey.takwave.core.io.SerialDataTransport
+import com.fearmikey.takwave.core.ip.Ipv4
 import com.fearmikey.takwave.core.io.Ptt
 import com.fearmikey.takwave.core.io.PttCommand
 import com.fearmikey.takwave.core.io.SoftModemTransport
@@ -43,13 +48,20 @@ import com.fearmikey.takwave.data.TimeSource
 import com.fearmikey.takwave.data.EncryptionMode
 import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.PttMethod
+import com.fearmikey.takwave.data.SerialLinkKind
+import com.fearmikey.takwave.data.label
 import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.net.CotServer
+import com.fearmikey.takwave.data.BluetoothKissLink
+import com.fearmikey.takwave.ptt.BleKissLink
 import com.fearmikey.takwave.ptt.BluetoothDevices
 import com.fearmikey.takwave.ptt.BluetoothPtt
 import com.fearmikey.takwave.ptt.SerialDevices
+import com.fearmikey.takwave.ptt.SerialLinks
 import com.fearmikey.takwave.ptt.SerialPtt
+import com.fearmikey.takwave.usb.UsbNetDevices
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.util.concurrent.atomic.AtomicReference
 
 enum class CalibrationTone { MARK, SPACE, ALTERNATING }
 
@@ -75,6 +87,8 @@ class RadioEngine(
     private val log: PacketLog,
     private val keyFiles: KeyFiles,
     private val stateFile: StateFile,
+    /** Writes a change to the stored settings (what auto-detection learned); the running engine keeps its snapshot. */
+    private val saveSettings: ((Settings) -> Settings) -> Unit = {},
 ) {
     /** Correction added to the phone clock to get GNSS time; 0 until a GNSS time is available. */
     @Volatile private var clockOffsetMs = 0L
@@ -93,13 +107,18 @@ class RadioEngine(
     private var softModem: SoftModemTransport? = null
     /** The KISS link (TCP or Bluetooth) when a TNC is the backend, to show whether it is up. */
     @Volatile private var kiss: KissStreamTransport? = null
+    /** The digital radio's IP data link (P25 or MOTOTRBO) when that is the backend, to show whether it is up. */
+    @Volatile private var ipRadio: P25DataTransport? = null
+    /** A D-STAR or NXDN radio's serial data link when that is the backend, to show whether it is up. */
+    @Volatile private var serialData: SerialDataTransport? = null
+    private var warnedBadFrames = false
     private var audioSource: AndroidAudioSource? = null
     private var audioSink: AndroidAudioSink? = null
     private var serialPtt: SerialPtt? = null
     private var bluetoothPtt: BluetoothPtt? = null
     private var txThread: Thread? = null
     private var tickThread: Thread? = null
-    private var backendInfo = ""
+    @Volatile private var backendInfo = ""
     private var cipherInfo = ""
     private var repeatInfo = ""
 
@@ -205,6 +224,9 @@ class RadioEngine(
                         KissTcpTransport(settings.kissHost, settings.kissPort, onStatus = { info(it) }).also { kiss = it }
                     }
                     ModemBackend.KISS_BLUETOOTH -> buildBluetoothKiss()
+                    ModemBackend.P25_DATA -> buildP25Data()
+                    ModemBackend.DMR_DATA -> buildDmrData()
+                    ModemBackend.SERIAL_DATA -> buildSerialData()
                 }
             } catch (e: Exception) {
                 warn("Radio interface failed to start: ${e.message}")
@@ -298,8 +320,8 @@ class RadioEngine(
 
     /**
      * A radio with a built-in KISS TNC (for example the BTECH UV-PRO) or a Bluetooth TNC, reached
-     * over a Bluetooth serial link. The TNC keys the radio itself, so there is no PTT to manage
-     * here: a frame cut off by a dropped link is never sent.
+     * over a classic Bluetooth serial link or the Bluetooth LE KISS service. The TNC keys the radio
+     * itself, so there is no PTT to manage here: a frame cut off by a dropped link is never sent.
      */
     private fun buildBluetoothKiss(): FrameTransport {
         val address = settings.kissBtDevice
@@ -307,17 +329,240 @@ class RadioEngine(
         if (!BluetoothDevices.hasPermission(context)) {
             warn("The Nearby devices (Bluetooth) permission has not been granted, so the Bluetooth TNC cannot be reached.")
         }
-        val label = BluetoothDevices.paired(context).firstOrNull { it.address == address }?.label ?: address
-        backendInfo = "KISS TNC over Bluetooth: $label"
+        val label = BluetoothDevices.known(context).firstOrNull { it.address.equals(address, ignoreCase = true) }?.label ?: address
+        val linkMode = settings.kissBtLink
+        backendInfo = "KISS TNC over Bluetooth" + (if (linkMode == BluetoothKissLink.BLE) " LE" else "") + ": $label"
         if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is up to the TNC when using KISS; the FX.25 setting is not used.")
+        // With Automatic, what worked last is tried first on the next reconnect.
+        val lastWorked = AtomicReference<BluetoothKissLink?>(null)
         return KissStreamTransport("Bluetooth TNC $label", onStatus = { info(it) }) {
-            val socket = BluetoothDevices.connectSerial(context, address)
-            object : KissLink {
-                override val input = socket.inputStream
-                override val output = socket.outputStream
-                override fun close() = socket.close()
+            when (linkMode) {
+                BluetoothKissLink.CLASSIC -> BluetoothDevices.openLink(context, address) { info(it) }
+                BluetoothKissLink.BLE -> BleKissLink.open(context, address)
+                BluetoothKissLink.AUTO -> openBluetoothKissAuto(address, lastWorked)
             }
         }.also { kiss = it }
+    }
+
+    /**
+     * Automatic link choice: a Bluetooth LE-only device (or one picked in the BLE chooser) gets the
+     * BLE KISS service; anything else gets classic serial first and BLE if that fails.
+     */
+    private fun openBluetoothKissAuto(address: String, lastWorked: AtomicReference<BluetoothKissLink?>): KissLink {
+        val device = BluetoothDevices.resolve(context, address, allowFound = true)
+        // Devices found with the BLE chooser are not paired, so classic serial cannot reach them.
+        val leOnly = BluetoothDevices.typeOf(device) == android.bluetooth.BluetoothDevice.DEVICE_TYPE_LE ||
+            BluetoothDevices.known(context).any { it.address.equals(address, ignoreCase = true) && !it.paired }
+        val order = when {
+            leOnly -> listOf(BluetoothKissLink.BLE)
+            lastWorked.get() == BluetoothKissLink.BLE -> listOf(BluetoothKissLink.BLE, BluetoothKissLink.CLASSIC)
+            else -> listOf(BluetoothKissLink.CLASSIC, BluetoothKissLink.BLE)
+        }
+        val failures = ArrayList<String>()
+        for (mode in order) {
+            try {
+                val link = if (mode == BluetoothKissLink.BLE) BleKissLink.open(context, address)
+                else BluetoothDevices.openLink(context, address) { info(it) }
+                if (lastWorked.getAndSet(mode) != mode && order.size > 1) {
+                    info("Bluetooth TNC: connected over " + if (mode == BluetoothKissLink.BLE) "Bluetooth LE." else "classic Bluetooth serial.")
+                }
+                return link
+            } catch (e: Exception) {
+                failures.add(e.message ?: e.javaClass.simpleName)
+            }
+        }
+        error(failures.distinct().joinToString("; "))
+    }
+
+    /**
+     * A P25 radio (for example a Motorola ASTRO 25 portable with the packet data option) on a
+     * serial data cable. TAKwave talks PPP or SLIP to it and sends each frame as a UDP datagram;
+     * the radio's own P25 modem carries it and keys the transmitter, so there is no PTT to manage
+     * here. A frame cut off by a dropped link is discarded by the radio.
+     *
+     * With auto-detect on, every (re)connect first probes the port for the baud rate and framing
+     * (the last ones found are tried first, so this is quick once known) and the result, and the
+     * addresses PPP negotiates, are written back to the settings.
+     */
+    private fun buildP25Data(): FrameTransport {
+        settings.p25Problem?.let { error(it.removeSuffix(".").replaceFirstChar { c -> c.lowercase() }) }
+        val (bps, keyUp) = settings.radioPacing
+        val config = P25DataConfig(
+            destinations = Ipv4.parseList(settings.p25Destinations)!!,
+            port = settings.p25Port,
+            throughputBps = bps,
+            keyUpMs = keyUp,
+        )
+        val targets = config.destinations.joinToString { if (it == Ipv4.BROADCAST) "broadcast" else Ipv4.format(it) }
+        fun describe(s: Settings) = "P25 packet data (${s.p25Framing.name}, " +
+            (if (s.p25Link == SerialLinkKind.BLUETOOTH) "Bluetooth serial" else "${s.p25Baud} baud") + ") to $targets" +
+            if (s.p25AutoDetect) ", auto-detect" else ""
+        if (settings.p25Link == SerialLinkKind.BLUETOOTH && !BluetoothDevices.hasPermission(context)) {
+            warn("The Nearby devices (Bluetooth) permission has not been granted, so the radio's Bluetooth adapter cannot be reached.")
+        }
+        backendInfo = describe(settings)
+        if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is not used with P25 packet data; the radio does its own error correction.")
+        if (config.destinations.size > 1) {
+            info("P25 packet data: every frame is sent once per destination (${config.destinations.size}), which multiplies air time.")
+        }
+        // What this run has learned about the radio; starts from the stored settings. Read and
+        // written from the transport's reader and ticker threads.
+        val known = AtomicReference(settings)
+        logPacing()
+        return P25DataTransport(
+            "P25 radio", config,
+            onStatus = { info(it) },
+            onIgnored = radioDataLogger(),
+            onLinkUp = { local, radio ->
+                val localText = Ipv4.format(local)
+                val radioText = Ipv4.format(radio)
+                val before = known.get()
+                if (settings.p25AutoDetect && (before.p25LocalIp != localText || before.p25RadioIp != radioText)) {
+                    known.set(before.copy(p25LocalIp = localText, p25RadioIp = radioText))
+                    info("P25 radio: saved the negotiated addresses (phone $localText, radio $radioText).")
+                    saveSettings { it.copy(p25LocalIp = localText, p25RadioIp = radioText) }
+                }
+            },
+        ) {
+            var s = known.get()
+            val bluetooth = s.p25Link == SerialLinkKind.BLUETOOTH
+            // An APX-style radio on USB is a network adapter; that wins over a serial port.
+            val net = if (bluetooth) null else UsbNetDevices.find(context, s.p25Device)
+            if (net != null) {
+                val opened = UsbNetDevices.open(context, net)
+                backendInfo = "P25 packet data over USB network (${opened.framing.label}) to $targets" +
+                    if (s.p25AutoDetect) ", addresses from the radio" else ""
+                return@P25DataTransport P25Line.usbNetwork(
+                    opened,
+                    opened.framing,
+                    opened.mac,
+                    Ipv4.parse(s.p25LocalIp)!!,
+                    Ipv4.parse(s.p25RadioIp)!!,
+                    useDhcp = s.p25AutoDetect,
+                    maxTransferSize = opened.maxTransferSize,
+                )
+            }
+            if (s.p25AutoDetect) {
+                val found = SerialLinks.probe(context, s) { Log.d(TAG, "P25 probe: $it") }
+                val updated = s.withP25Detected(found)
+                if (updated != s) {
+                    s = updated
+                    known.set(updated)
+                    backendInfo = describe(updated)
+                    info(
+                        "P25 radio detected: ${found.framing.name}" + (if (bluetooth) " over Bluetooth" else " at ${found.baud} baud") +
+                            (found.radioAddress?.let { ", radio at ${Ipv4.format(it)}" } ?: "") + ". Saved.",
+                    )
+                    saveSettings { it.withP25Detected(found) }
+                }
+                // Many Bluetooth serial adapters need a moment before they accept the next connection.
+                if (bluetooth) Thread.sleep(BT_REOPEN_DELAY_MS)
+            }
+            P25Line.serial(
+                if (bluetooth) BluetoothDevices.openLink(context, s.p25BtDevice) { info(it) }
+                else SerialLinks.open(context, s.p25Device, s.p25Baud),
+                s.p25Framing,
+                Ipv4.parse(s.p25LocalIp)!!,
+                Ipv4.parse(s.p25RadioIp)!!,
+            )
+        }.also { ipRadio = it }
+    }
+
+    /**
+     * A MOTOTRBO or Hytera (DMR) radio on its USB cable, which makes it a small network adapter (RNDIS).
+     * Each frame goes as a UDP datagram to the talkgroup's address (a group data call) and to each
+     * listed radio's address (individual data calls); the radio carries it over DMR and keys
+     * itself, so there is no PTT to manage here. The radio only passes data on to the phone when
+     * "Forward to PC" is on in its programming.
+     */
+    private fun buildDmrData(): FrameTransport {
+        settings.dmrProblem?.let { error(it.removeSuffix(".").replaceFirstChar { c -> c.lowercase() }) }
+        val (bps, keyUp) = settings.radioPacing
+        val config = P25DataConfig(settings.dmrDestinations!!, settings.dmrPort, throughputBps = bps, keyUpMs = keyUp)
+        logPacing()
+        val targets = settings.dmrTargetsText
+        val make = settings.dmrVendor.label
+        backendInfo = "$make data to $targets" + if (settings.dmrAutoAddresses) ", addresses from the radio" else ""
+        if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is not used with DMR data; the radio does its own error correction.")
+        if (config.destinations.size > 1) {
+            info("$make data: every frame is sent once per destination (${config.destinations.size}), which multiplies air time.")
+        }
+        val known = AtomicReference(settings)
+        return P25DataTransport(
+            "$make radio", config,
+            onStatus = { info(it) },
+            onIgnored = radioDataLogger(),
+            onLinkUp = { local, radio ->
+                val localText = Ipv4.format(local)
+                val radioText = Ipv4.format(radio)
+                val before = known.get()
+                if (settings.dmrAutoAddresses && (before.dmrLocalIp != localText || before.dmrRadioIp != radioText)) {
+                    known.set(before.copy(dmrLocalIp = localText, dmrRadioIp = radioText))
+                    info("$make radio: saved the addresses it handed out (phone $localText, radio $radioText).")
+                    saveSettings { it.copy(dmrLocalIp = localText, dmrRadioIp = radioText) }
+                }
+            },
+        ) {
+            val s = known.get()
+            val net = UsbNetDevices.find(context, s.dmrDevice)
+                ?: error(
+                    if (s.dmrDevice.isEmpty()) "no radio with a USB network link is plugged in"
+                    else "the chosen radio (${s.dmrDevice}) is not plugged in",
+                )
+            val opened = UsbNetDevices.open(context, net)
+            backendInfo = "$make data over USB (${opened.framing.label}) to $targets" +
+                if (s.dmrAutoAddresses) ", addresses from the radio" else ""
+            P25Line.usbNetwork(
+                opened,
+                opened.framing,
+                opened.mac,
+                Ipv4.parse(s.dmrLocalIp)!!,
+                Ipv4.parse(s.dmrRadioIp)!!,
+                useDhcp = s.dmrAutoAddresses,
+                maxTransferSize = opened.maxTransferSize,
+                multicastDelivery = s.dmrGroupDelivery,
+            )
+        }.also { ipRadio = it }
+    }
+
+    /**
+     * A digital radio whose data port carries bytes over the air unchanged: Icom D-STAR in DV data
+     * mode, or a Kenwood NX / Icom IDAS NXDN radio with transparent data, on a USB serial port (the
+     * radio's own, or an RS-232 adapter on its data cable) or a Bluetooth serial link (the radio's
+     * own, as on an ID-52 or IC-705, or a Bluetooth serial adapter). The radio keys itself when data
+     * arrives, so there is no PTT to manage here.
+     */
+    private fun buildSerialData(): FrameTransport {
+        settings.serialRadioProblem?.let { error(it.removeSuffix(".").replaceFirstChar { c -> c.lowercase() }) }
+        val type = settings.serialRadioType
+        val name = type.label.substringBefore(" (").substringBefore(",") + " radio"
+        backendInfo = settings.serialRadioSummary
+        if (settings.fx25 != Fx25Mode.OFF) info("FX.25 is not used with a digital radio's data port; each frame carries its own check instead.")
+        if (settings.serialRadioLink == SerialLinkKind.BLUETOOTH && !BluetoothDevices.hasPermission(context)) {
+            warn("The Nearby devices (Bluetooth) permission has not been granted, so the radio cannot be reached.")
+        }
+        val (bps, keyUp) = settings.radioPacing
+        logPacing()
+        return SerialDataTransport(
+            name, bps, keyUp, settings.serialEncoding,
+            onStatus = { info(it) },
+            onDiagnostic = radioDataLogger(),
+        ) {
+            when (settings.serialRadioLink) {
+                SerialLinkKind.USB -> SerialLinks.open(context, settings.serialRadioUsbDevice, settings.serialRadioBaud, settings.serialRadioUsbPort)
+                SerialLinkKind.BLUETOOTH -> BluetoothDevices.openLink(context, settings.serialRadioBtDevice) { info(it) }
+            }
+        }.also { serialData = it }
+    }
+
+    /** Logs the raw-data observations of a digital radio when the operator asked for them. */
+    private fun radioDataLogger(): ((String) -> Unit)? =
+        if (settings.radioDataLog) { message -> info(message) } else null
+
+    private fun logPacing() {
+        val (bps, keyUp) = settings.radioPacing
+        val custom = settings.radioDataBps > 0 || settings.radioKeyUpMs >= 0
+        info("Pacing: $bps bit/s plus $keyUp ms per transmission" + if (custom) " (set by hand)." else " (default for this radio).")
     }
 
     private fun buildSlots(): SlotConfig? {
@@ -432,6 +677,7 @@ class RadioEngine(
 
     private fun tickLoop() {
         while (running) {
+            checkDamagedFrames()
             sampleStats()
             publish()
             val now = System.currentTimeMillis()
@@ -496,6 +742,18 @@ class RadioEngine(
         }
     }
 
+    /** Warns once when a serial data radio keeps delivering frames that fail their check. */
+    private fun checkDamagedFrames() {
+        val bad = serialData?.badFrames ?: return
+        if (bad < BAD_FRAME_WARNING || warnedBadFrames) return
+        warnedBadFrames = true
+        warn(
+            "$bad damaged packets from the radio were dropped. If none get through, the radio may be changing " +
+                "bytes: set Encoding to Text on every station (Settings > Radio & audio), and check that every radio " +
+                "uses the same data mode and baud rate. \"Log raw radio data\" shows what arrives.",
+        )
+    }
+
     private fun publish() {
         if (settings.slotted && settings.timeSource == TimeSource.GNSS && softModem != null) updateGnssOffset()
         val tr = transport
@@ -513,7 +771,7 @@ class RadioEngine(
             localPosition = gw?.localPosition,
             softModem = softModem != null,
             txTimeoutS = settings.txTimeoutS,
-            backendInfo = backendInfo + if (kiss?.connected == false) " (not connected)" else "",
+            backendInfo = backendInfo + if (kiss?.connected == false || ipRadio?.connected == false || serialData?.connected == false) " (not connected)" else "",
             cipherInfo = cipherInfo,
             slotInfo = if (slotInfo.isEmpty()) "" else "$slotInfo; $timeInfo",
             warnings = synchronized(warnings) { warnings.toList() },
@@ -631,5 +889,11 @@ class RadioEngine(
         const val STATUS_PERIOD_MS = 100L
         const val GNSS_CHECK_PERIOD_MS = 30_000L
         const val SAVE_PERIOD_MS = 30_000L
+
+        /** Damaged frames from a serial data radio before the operator is told how to fix it. */
+        const val BAD_FRAME_WARNING = 5
+
+        /** Pause between closing a Bluetooth serial link after detection and opening it again. */
+        const val BT_REOPEN_DELAY_MS = 500L
     }
 }

@@ -47,6 +47,15 @@ object HelpText {
             "TAKwave exchanges packets with it over Bluetooth, with no cables at all.\n\n" +
             "• External KISS TNC: a separate modem (hardware, or software such as Dire Wolf) does everything; " +
             "TAKwave only exchanges packets with it over the network.\n\n" +
+            "• P25 radio with packet data: a digital radio such as a Motorola APX 8000, XTS 2500 or L3Harris " +
+            "XL-200P carries the packets with its own P25 modem. TAKwave connects to it over its USB cable or " +
+            "serial data cable.\n\n" +
+            "• DMR radio (MOTOTRBO or Hytera): a Motorola XPR or SL, or a Hytera PD or HP series radio, carries the " +
+            "packets as DMR data calls. TAKwave connects to it over its USB programming cable. Amateur DMR radios " +
+            "(AnyTone, Ailunce, TYT) cannot pass data to a phone; use them in analog FM with one of the setups above.\n\n" +
+            "• D-STAR or NXDN radio: an Icom D-STAR radio (IC-705, ID-52, IC-9700) in DV data mode, or a Kenwood NX " +
+            "or Icom IDAS NXDN radio with transparent data, passes TAKwave's packets through its data port. TAKwave " +
+            "connects over USB serial or Bluetooth serial.\n\n" +
             "• No radio: two phones on a table talk to each other through speaker and microphone. Good for a " +
             "first test."
 
@@ -56,8 +65,17 @@ object HelpText {
             "people want.\n\n" +
             "KISS over TCP: an external TNC or a program such as Dire Wolf does the modulation, channel access " +
             "and PTT. TAKwave just hands it packets over a network connection.\n\n" +
-            "KISS over Bluetooth: the same, but the TNC is inside the radio (for example the BTECH UV-PRO) or is a " +
-            "Bluetooth TNC, and TAKwave reaches it over a Bluetooth serial link. No audio cable is needed."
+            "KISS over Bluetooth: the same, but the TNC is inside the radio (for example the BTECH UV-PRO or Kenwood " +
+            "TH-D75) or is a Bluetooth TNC, and TAKwave reaches it over classic Bluetooth serial or Bluetooth LE. No " +
+            "audio cable is needed.\n\n" +
+            "P25 radio packet data: a digital P25 radio with packet data, such as a Motorola APX 8000 or XTS 2500, " +
+            "an L3Harris XG or XL series, or a Kenwood NX-5000, carries the packets with its own P25 modem. TAKwave " +
+            "talks to it over its USB cable, or its serial data cable through a USB or Bluetooth serial adapter.\n\n" +
+            "DMR radio data: a Motorola MOTOTRBO radio (such as an XPR 6550) or a Hytera radio carries the packets " +
+            "as DMR data calls to a talkgroup. TAKwave talks to it over its USB programming cable.\n\n" +
+            "D-STAR or NXDN radio data: an Icom D-STAR radio in DV data mode, or a Kenwood NX / Icom IDAS NXDN radio " +
+            "with transparent data, sends whatever arrives on its data port over the air. TAKwave reaches it over USB " +
+            "serial or Bluetooth serial."
 
     const val AUDIO =
         "Input is the sound coming from the radio's speaker or data port. Output is the sound going to the " +
@@ -93,8 +111,15 @@ object HelpText {
         "TAKwave connects to a Bluetooth device that offers a serial port (SPP) and sends one command to start " +
             "transmitting and another to stop.\n\n" +
             "Pair the radio or adapter in Android's Bluetooth settings first, then choose it here. Pick the " +
-            "command set your radio understands, or enter your own. In custom commands, write special bytes as " +
-            "\\r, \\n or \\xHH, for example \\xFE\\xFE\\x94\\xE0\\x1C\\x00\\x01\\xFD for an Icom radio at address 94.\n\n" +
+            "command set your radio understands, or enter your own. Ready-made sets: Kenwood / Elecraft CAT, Yaesu " +
+            "CAT, Kenwood TH-D74 / TH-D75, and Icom IC-705 CI-V (set the IC-705's Bluetooth serial port function to " +
+            "CI-V). In custom commands, write special bytes as \\r, \\n or \\xHH, for example " +
+            "\\xFE\\xFE\\x94\\xE0\\x1C\\x00\\x01\\xFD for an Icom radio at address 94.\n\n" +
+            "When TAKwave recognises the chosen radio by its Bluetooth name, it says how the radio is best used. " +
+            "Some, such as the UV-PRO and TH-D75, have a TNC built in: \"KISS over Bluetooth\" then needs no " +
+            "audio cable at all.\n\n" +
+            "TAKwave tries the standard serial port with an encrypted link first, then without encryption for " +
+            "adapters that refuse it. PTT commands only ever go to the standard serial port.\n\n" +
             "Only the PTT goes over Bluetooth; the audio still needs a cable or USB sound card.\n\n" +
             "Radios that only pair with a Bluetooth earpiece or a Bluetooth PTT button cannot be keyed this way: " +
             "they expect a headset, and Android does not let an app act as one.\n\n" +
@@ -108,18 +133,150 @@ object HelpText {
             "transmit settings are not used."
 
     const val KISS_BLUETOOTH =
-        "Some radios, such as the BTECH UV-PRO, have a packet modem (KISS TNC) built in and offer it over " +
-            "Bluetooth. TAKwave then needs no audio cable: it hands packets to the radio, and the radio does the " +
-            "modulation, waits for a clear channel and keys itself.\n\n" +
-            "1. Pair the radio in Android's Bluetooth settings.\n" +
-            "2. Switch the radio's KISS TNC on (in the radio's menu or its companion app), and tune it to the " +
+        "Some radios, such as the BTECH UV-PRO, Radioddity GA-5WB, Vero VR-N76 and Kenwood TH-D74 / TH-D75, have a " +
+            "packet modem (KISS TNC) built in and offer it over Bluetooth. Bluetooth TNCs such as the Mobilinkd do the " +
+            "same for any radio they are wired to. TAKwave then needs no audio cable: it hands packets to the TNC, " +
+            "which does the modulation, waits for a clear channel and keys the radio.\n\n" +
+            "1. Pair the radio or TNC in Android's Bluetooth settings. A Bluetooth LE TNC (such as the Mobilinkd " +
+            "TNC4) can instead be found with \"Find a Bluetooth LE TNC nearby\": Android shows the TNCs it finds, " +
+            "so TAKwave needs no location or scan permission.\n" +
+            "2. Switch the KISS TNC on (in the radio's menu or its companion app), and tune the radio to the " +
             "team's frequency.\n" +
-            "3. Choose the radio here.\n\n" +
+            "3. Choose the radio or TNC here.\n\n" +
+            "Bluetooth link: Automatic uses Bluetooth LE for a device that only has that, and otherwise classic " +
+            "Bluetooth serial, falling back to Bluetooth LE if that fails. Choose one if you know it. On classic " +
+            "serial, TAKwave tries the standard serial port with and without encryption, then any serial service " +
+            "of the radio's own.\n\n" +
             "Most radios accept only one Bluetooth serial connection, so close the radio's companion app and any " +
             "other packet app while TAKwave is running. If the link drops, TAKwave reconnects on its own; packets " +
             "are not sent while it is down.\n\n" +
             "The radio's TNC works at 1200 baud without FX.25, which every TAKwave station can read. TAKwave's " +
             "audio, PTT, transmit, FX.25 and time slot settings are not used."
+
+    const val P25_DATA =
+        "A P25 radio with packet data can carry TAKwave's packets with its own digital modem: an APX portable " +
+            "(APX 6000, APX 8000) on its USB cable, or an ASTRO 25 radio (XTS 2500, XTS 5000, XTL) on its serial " +
+            "data cable. TAKwave connects to the radio as its \"mobile computer\", speaks IP to it, and sends each " +
+            "packet as a UDP datagram. The radio does the modulation, waits for the channel and keys itself.\n\n" +
+            "APX portables: the USB cable makes the radio a small network adapter (RNDIS). Plug it into the " +
+            "phone with an OTG adapter; TAKwave offers to use it, asks the radio for the addresses (DHCP), and " +
+            "falls back to the addresses set here if the radio does not hand any out.\n\n" +
+            "Serial data cable: a USB-to-RS-232 adapter on the radio's RS-232 data cable; TAKwave finds the baud " +
+            "rate and PPP or SLIP by itself.\n\n" +
+            "Bluetooth: a Bluetooth serial (SPP) adapter on the same RS-232 data cable, so the phone needs no cable. " +
+            "Set the adapter to the radio's data port baud rate (8N1) with its own setup tool and pair it in " +
+            "Android's Bluetooth settings; TAKwave finds PPP or SLIP by itself, but cannot change the adapter's " +
+            "rate. The adapter must pass all 256 byte values (no software flow control).\n\n" +
+            "Automatic setup: plugging a Motorola radio in on its USB cable makes TAKwave offer to use it. With " +
+            "\"Detect the radio's settings automatically\" on (the default), TAKwave asks an APX for addresses " +
+            "(DHCP, sent so it cannot be routed), or finds a serial data port's baud rate and framing by sending a " +
+            "PPP link request and a ping that cannot be forwarded (TTL 1), and keeps the addresses the radio agrees to. None of this goes over the air. What it cannot " +
+            "find out by itself: whether the radio has the packet data option, the other radios' addresses, and " +
+            "the UDP port your team uses.\n\n" +
+            "What the radio needs (set in its programming software; this is from community reports and is not yet " +
+            "tested with TAKwave):\n" +
+            "• The APCO packet data option (Q947 / W947) in the radio's flash. Without it the radio has no data " +
+            "service.\n" +
+            "• Radio Wide > Data: subscriber IP 192.168.128.1 and mobile computer IP 192.168.128.2 (the defaults " +
+            "here), and the data port enabled (auto-detect finds its framing and baud rate).\n" +
+            "• On the conventional channel used: Packet Data Capable System on, Packet Data Mode \"Repeated\" (reported " +
+            "to be needed even on simplex), a Subscriber Air-Interface IP that is different on every radio but in the " +
+            "same /24 network, and Limited Broadcast on if you send to 255.255.255.255.\n" +
+            "• A trunked system needs data infrastructure (a packet data gateway); conventional and simplex channels " +
+            "do not.\n\n" +
+            "Cables: for an APX portable, its USB programming/data cable and a USB OTG adapter for the phone. For an " +
+            "XTS 2500, a USB-to-RS-232 adapter on the RS-232 data cable (reportedly RKN4106).\n\n" +
+            "Other makers (not yet tested with TAKwave): an L3Harris XG-100P, XL-200P or similar with P25 data, a " +
+            "Kenwood NX-5000 in P25 mode, or a BK or EF Johnson P25 radio should work the same way if it offers IP " +
+            "packet data to a computer on its USB cable (as a network adapter) or on a serial data cable (PPP or " +
+            "SLIP). Plugging them in does not open the setup dialog, so choose \"P25 radio packet data\" here and " +
+            "pick the radio below. Their cable addresses differ from Motorola's: with auto-detect on TAKwave asks " +
+            "the radio, otherwise copy them from the radio's programming. The radio must have its data feature " +
+            "enabled and an air-interface IP address of its own.\n\n" +
+            "Every station must use the same UDP port. P25 data is slow (a few kilobits per second at best), so " +
+            "keep the PLI interval generous. Your callsign still goes inside every packet as the station " +
+            "identification. On amateur frequencies, the radio's own encryption must be off as well."
+
+    const val DMR_DATA =
+        "A MOTOTRBO radio can carry TAKwave's packets as DMR data: TAKwave connects to the radio over its USB " +
+            "programming cable (the radio appears as a small network adapter), speaks IP to it, and sends each " +
+            "packet as a UDP datagram. The radio does the modulation, waits for the channel and keys itself.\n\n" +
+            "Addresses: MOTOTRBO gives every radio ID and talkgroup an IP address. Talkgroup 1 is 225.0.0.1 and " +
+            "radio 1234 is 12.0.4.210. TAKwave sends each packet to the talkgroup as a group data call, which every " +
+            "radio on the channel with that talkgroup in its receive group list hears. You can add individual radio " +
+            "IDs too, at the cost of one more transmission each.\n\n" +
+            "What the radio needs (set in MOTOTRBO CPS; CPS 16 for first-generation radios such as the XPR 6550). " +
+            "This comes from Motorola's documentation and community reports and is not yet tested with TAKwave:\n" +
+            "• Radio Wide (or General Settings) > Network: \"Forward to PC\" set to Via USB. Without it the radio " +
+            "keeps received data to itself.\n" +
+            "• Network: Radio IP 192.168.10.1 (the default) and the CAI Network (12) and CAI Group Network (225) " +
+            "matching the values here. Every radio needs a different radio ID.\n" +
+            "• Network: \"Compressed UDP Data Header\" turned on, with the same choice on every radio (DMR Standard " +
+            "if offered, else MOTOTRBO). It shrinks the 28-byte IP header that would otherwise go out with every packet.\n" +
+            "• On the channel: the talkgroup used here in the receive group list, and data allowed on that channel " +
+            "(on a repeater, data shares the timeslot with voice).\n" +
+            "• Leave ARS (automatic registration) off unless your system has a presence server; radio-to-radio data " +
+            "does not need it.\n" +
+            "• Capacity Plus and Linked Capacity Plus systems need data revert channels; conventional channels and " +
+            "simplex do not.\n\n" +
+            "Cable: the radio's USB programming cable (PMKN4012 for XPR portables) and a USB OTG adapter for the " +
+            "phone. If a computer does not see the radio either, the cable or the radio's side connector is at fault.\n\n" +
+            "With \"Get the addresses from the radio\" on (the default), TAKwave asks the radio's DHCP server for " +
+            "the addresses, which never goes over the air, and falls back to the addresses set here.\n\n" +
+            "DMR data is slow (well under 2 kbit/s per timeslot), so keep the PLI interval generous. Every station " +
+            "must use the same UDP port. Your callsign still goes inside every packet as the station identification. " +
+            "On amateur frequencies the radio's own privacy (Basic or Enhanced) must be off as well.\n\n" +
+            "Hytera radios (PD, HP and X1 series): the USB cable makes them a network adapter too, and their data " +
+            "service maps radio IDs to addresses in the same way. In Hytera's programming software, turn on " +
+            "forwarding of data to the PC over USB and note the radio's IP network settings; TAKwave starts from " +
+            "network 10 for radios and 225 for talkgroups, which is a best guess and not yet tested. Hytera radios " +
+            "and MOTOTRBO radios do not exchange data with each other this way.\n\n" +
+            "Amateur DMR radios such as the AnyTone AT-D878UV or Ailunce HD1 cannot pass data to a phone, so they " +
+            "cannot be used here. They can run TAKwave in analog FM with an audio cable instead."
+
+    const val SERIAL_DATA =
+        "Some digital radios send whatever arrives on their data port over the air and deliver it from the data " +
+            "port of the other radios. TAKwave uses that as its modem: each packet goes into the port with a check " +
+            "value, and the radio keys itself, transmits it and unkeys. Not yet tested with TAKwave; what follows " +
+            "comes from the radios' manuals and community reports.\n\n" +
+            "Icom D-STAR (IC-705, ID-52, IC-9700, ID-5100 and similar):\n" +
+            "• Put the radio in DV mode on the team's frequency (simplex, or a repeater without gateway linking).\n" +
+            "• Set the data port to DV Data: on USB this is the USB serial function (on the IC-705, the second " +
+            "port, \"USB (B)\"); on Bluetooth (ID-52, IC-705) the Bluetooth data device's serial port function.\n" +
+            "• Set DV Data TX to Auto, so the radio transmits when data arrives.\n" +
+            "• Match the data port's baud rate here (9600 is common) when using USB.\n" +
+            "• DV Fast Data (IC-705, IC-9700, ID-52 and other recent radios) is about three times faster but sends " +
+            "data in place of voice; every station must use the same choice. Slow data is about 900 bit/s, so keep " +
+            "the PLI interval long.\n" +
+            "D-STAR is an amateur mode; your D-STAR callsign goes out in the radio's header, and TAKwave's packets " +
+            "carry your callsign too.\n\n" +
+            "Kenwood NX and Icom IDAS (NXDN):\n" +
+            "• Enable transparent data (Kenwood) or serial data (Icom) on the radio's data port in its " +
+            "programming software, at the baud rate set here, on an NXDN conventional channel. Model and option " +
+            "support varies; check your radio's manual.\n" +
+            "• Connect a USB-to-RS-232 adapter to the radio's data cable, or a Bluetooth serial (SPP) adapter " +
+            "wired to that cable.\n\n" +
+            "Any of these radios can also be reached through a Bluetooth serial adapter plugged into its data cable. " +
+            "All stations on the channel must use the same kind of radio and data mode; D-STAR, NXDN, DMR, P25 and " +
+            "analog stations do not hear each other. A packet damaged on the air fails its check and is dropped. " +
+            "If every packet arrives damaged, or none arrive although the link is up, switch Encoding to Text: some " +
+            "radios change or drop certain byte values, or only pass data line by line. " +
+            "FX.25, PTT, audio and channel access settings are not used. On amateur frequencies the radios' own " +
+            "scrambling or encryption must stay off."
+
+    const val RADIO_TUNING =
+        "These help when a digital radio does not behave as expected. TAKwave's support for these radios was " +
+            "written from documentation and has not yet been tested on the air.\n\n" +
+            "Pacing: the radio has only a small buffer, so TAKwave waits after each packet for the time the radio " +
+            "should take to send it. If the second or third of several packets in a row never arrives, the radio's " +
+            "buffer overflowed: lower the data rate or raise the key-up time. If the radio transmits in short " +
+            "bursts with long gaps, raise the data rate. The air time figures on the Status screen use the same " +
+            "numbers.\n\n" +
+            "Raw radio data: logs what reaches the phone but is not a TAKwave packet. For a P25 or DMR radio that is " +
+            "every datagram on another port or protocol (the radio's own text messages, location reports, " +
+            "registration), with its addresses and first bytes. For a D-STAR or NXDN radio, the raw bytes received " +
+            "(at most 20 chunks a minute), damaged packets and text lines that are not TAKwave's. If packets never " +
+            "arrive, this shows whether anything reaches the phone at all, and in what form."
 
     const val TRANSMIT =
         "TXDELAY is the pause between keying the radio and sending data. Radios need a moment to reach full " +

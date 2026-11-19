@@ -1,0 +1,5 @@
+• Digital radios as the modem: P25 packet data (serial, Bluetooth, or APX over USB), MOTOTRBO and Hytera DMR, Icom D-STAR and NXDN
+• Bluetooth LE TNCs such as the Mobilinkd TNC4
+• One-tap setup for known Bluetooth radios; PTT presets for TH-D74/D75 and IC-705
+• Troubleshooting options: text encoding, manual pacing, raw data log
+Not yet tested on real digital radios or BLE TNCs

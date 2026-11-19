@@ -12,7 +12,9 @@ import androidx.compose.runtime.MutableIntState
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.fearmikey.takwave.core.io.PttCommand
+import com.fearmikey.takwave.data.BluetoothKissLink
 import com.fearmikey.takwave.data.BtPttPreset
+import com.fearmikey.takwave.data.SerialLinkKind
 import com.fearmikey.takwave.ptt.BluetoothDevices
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -75,11 +77,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.fearmikey.takwave.data.ModemBackend
+import com.fearmikey.takwave.core.ip.IpFraming
+import com.fearmikey.takwave.core.ip.Ipv4
 import com.fearmikey.takwave.data.PttLine
 import com.fearmikey.takwave.data.PttMethod
 import com.fearmikey.takwave.data.Settings
+import com.fearmikey.takwave.data.label
 import com.fearmikey.takwave.engine.RadioStatus
 import com.fearmikey.takwave.ptt.SerialDevices
+import com.fearmikey.takwave.ptt.SerialLinks
+import com.fearmikey.takwave.usb.UsbNetDevices
 import com.fearmikey.takwave.service.TakwaveService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -149,7 +156,15 @@ private fun SettingsPage.summary(s: Settings): Pair<String, Boolean> = when (thi
         ModemBackend.KISS_TCP ->
             "KISS TNC at ${s.kissHost.ifBlank { "(no host)" }}:${s.kissPort}" to s.kissHost.isBlank()
         ModemBackend.KISS_BLUETOOTH ->
-            (if (s.kissBtDevice.isEmpty()) "KISS TNC over Bluetooth, no device chosen" else "KISS TNC over Bluetooth") to s.kissBtDevice.isEmpty()
+            (if (s.kissBtDevice.isEmpty()) "KISS TNC over Bluetooth, no device chosen"
+            else "KISS TNC over Bluetooth" + if (s.kissBtLink == BluetoothKissLink.BLE) " LE" else "") to s.kissBtDevice.isEmpty()
+        ModemBackend.P25_DATA ->
+            (s.p25Problem ?: ("P25 radio packet data, ${s.p25Framing.name}" +
+                if (s.p25Link == SerialLinkKind.BLUETOOTH) " over Bluetooth" else " at ${s.p25Baud} baud")) to (s.p25Problem != null)
+        ModemBackend.DMR_DATA ->
+            (s.dmrProblem ?: "${s.dmrVendor.label} data to ${s.dmrTargetsText}") to (s.dmrProblem != null)
+        ModemBackend.SERIAL_DATA ->
+            (s.serialRadioProblem ?: s.serialRadioSummary) to (s.serialRadioProblem != null)
     }
     SettingsPage.CHANNEL -> {
         val parts = buildList {
@@ -319,6 +334,30 @@ private fun RadioPage(
             if (settings.backend == ModemBackend.KISS_BLUETOOTH) {
                 Spacer(Modifier.height(8.dp))
                 BluetoothKissSettings(settings) { update(it) }
+            }
+        }
+
+        if (settings.backend == ModemBackend.P25_DATA) {
+            Section("P25 radio packet data", info = HelpText.P25_DATA) {
+                P25DataSettings(settings, deviceTick.intValue, status.running) { update(it) }
+            }
+        }
+
+        if (settings.backend == ModemBackend.DMR_DATA) {
+            Section("DMR radio data", info = HelpText.DMR_DATA) {
+                DmrDataSettings(settings, deviceTick.intValue) { update(it) }
+            }
+        }
+
+        if (settings.backend == ModemBackend.SERIAL_DATA) {
+            Section("D-STAR or NXDN radio data", info = HelpText.SERIAL_DATA) {
+                SerialDataSettings(settings, deviceTick.intValue) { update(it) }
+            }
+        }
+
+        if (settings.radioPacingDefaults != null) {
+            Section("Tuning and troubleshooting", info = HelpText.RADIO_TUNING) {
+                RadioTuningSettings(settings) { update(it) }
             }
         }
 
@@ -585,19 +624,27 @@ internal fun SerialPttSettings(
 }
 
 /**
- * Picks one of the already-paired Bluetooth devices by MAC address, asking for the Nearby devices
- * permission when needed. [chooseHint] is shown while nothing is selected. Used for Bluetooth PTT
- * and for a Bluetooth KISS TNC.
+ * Picks one of the already-paired Bluetooth devices (or a Bluetooth LE TNC found with the BLE
+ * chooser) by MAC address, asking for the Nearby devices permission when needed. [chooseHint] is
+ * shown while nothing is selected. Used for Bluetooth PTT, a Bluetooth KISS TNC, and digital radio
+ * data links. With [settings] and [update], a recognised radio gets a hint with a button that sets
+ * TAKwave up for it ([BluetoothRadioHint]).
  */
 @Composable
-internal fun BluetoothDevicePicker(selected: String, chooseHint: String, onSelect: (String) -> Unit) {
+internal fun BluetoothDevicePicker(
+    selected: String,
+    chooseHint: String,
+    settings: Settings? = null,
+    update: (((Settings) -> Settings) -> Unit)? = null,
+    onSelect: (String) -> Unit,
+) {
     val context = LocalContext.current
     // Re-read the paired devices after a permission prompt or a trip to the system settings.
     var tick by remember { mutableIntStateOf(0) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
     val allowed = remember(tick) { BluetoothDevices.hasPermission(context) }
-    val devices = remember(tick) { BluetoothDevices.paired(context) }
+    val devices = remember(tick) { BluetoothDevices.known(context) }
 
     Text("Paired Bluetooth device", style = MaterialTheme.typography.labelLarge)
     if (!allowed) {
@@ -612,11 +659,12 @@ internal fun BluetoothDevicePicker(selected: String, chooseHint: String, onSelec
     } else {
         val choices = buildList {
             devices.forEach { add(it.address to it.label) }
-            if (selected.isNotEmpty() && devices.none { it.address == selected }) {
+            if (selected.isNotEmpty() && devices.none { it.address.equals(selected, ignoreCase = true) }) {
                 add(selected to "$selected (not paired)")
             }
         }
-        ChoiceSetting(choices, selected) { v -> onSelect(v) }
+        ChoiceSetting(choices, devices.firstOrNull { it.address.equals(selected, ignoreCase = true) }?.address ?: selected) { v -> onSelect(v) }
+        devices.firstOrNull { it.address.equals(selected, ignoreCase = true) }?.let { BluetoothRadioHint(it, settings, update) }
         if (devices.isEmpty()) {
             Text(
                 "No paired devices, or Bluetooth is off. Pair the radio or adapter in Android's Bluetooth settings first.",
@@ -636,15 +684,164 @@ internal fun BluetoothDevicePicker(selected: String, chooseHint: String, onSelec
     }) { Text("Open Bluetooth settings") }
 }
 
-/** Paired radio or TNC that speaks KISS over Bluetooth serial. Shared by Settings and the setup guide. */
+/**
+ * Radio or TNC that speaks KISS over Bluetooth: classic serial (SPP) or the Bluetooth LE KISS
+ * service. Shared by Settings and the setup guide.
+ */
 @Composable
 internal fun BluetoothKissSettings(settings: Settings, update: ((Settings) -> Settings) -> Unit) {
-    BluetoothDevicePicker(settings.kissBtDevice, "Choose the radio or TNC.") { v -> update { it.copy(kissBtDevice = v) } }
+    BluetoothDevicePicker(settings.kissBtDevice, "Choose the radio or TNC.", settings, update) { v -> update { it.copy(kissBtDevice = v) } }
+    BleTncFinder { address -> update { it.copy(kissBtDevice = address, kissBtLink = BluetoothKissLink.BLE) } }
+
+    Spacer(Modifier.height(8.dp))
+    Text("Bluetooth link", style = MaterialTheme.typography.labelLarge)
+    ChoiceSetting(BluetoothKissLink.entries.map { it to it.label }, settings.kissBtLink) { v -> update { it.copy(kissBtLink = v) } }
     Text(
-        "For a radio with a built-in KISS TNC, such as the BTECH UV-PRO, or a Bluetooth TNC. Pair it in Android's " +
-            "Bluetooth settings, switch its KISS TNC on, and close any other app that is connected to it. The " +
-            "radio does the modulation, channel access and PTT, so no audio cable is needed and the audio, PTT, " +
-            "transmit and channel access settings are not shown.",
+        "For a radio with a built-in KISS TNC, such as the BTECH UV-PRO or Kenwood TH-D75, or a Bluetooth TNC such " +
+            "as a Mobilinkd. Pair it in Android's Bluetooth settings (a Bluetooth LE TNC can be found with the button " +
+            "above instead), switch its KISS TNC on, and close any other app that is connected to it. The radio does " +
+            "the modulation, channel access and PTT, so no audio cable is needed and the audio, PTT, transmit and " +
+            "channel access settings are not shown.",
+        style = MaterialTheme.typography.bodySmall,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+/**
+ * Radio connection, line settings and IP addresses for a P25 radio's packet data. The radio is
+ * either a USB network device (APX portables: RNDIS), reached through a USB serial port (a data
+ * cable with PPP or SLIP), or through a Bluetooth serial adapter on that data cable. Shared by
+ * Settings and the setup guide.
+ */
+@Composable
+internal fun P25DataSettings(settings: Settings, deviceTick: Int, running: Boolean, update: ((Settings) -> Settings) -> Unit) {
+    val context = LocalContext.current
+    val bluetooth = settings.p25Link == SerialLinkKind.BLUETOOTH
+    Text("Connection", style = MaterialTheme.typography.labelLarge)
+    ChoiceSetting(
+        listOf(
+            SerialLinkKind.USB to "USB (the radio's USB cable, or a USB-to-RS-232 adapter on its data cable)",
+            SerialLinkKind.BLUETOOTH to "Bluetooth serial adapter on the radio's data cable",
+        ),
+        settings.p25Link,
+    ) { v -> update { it.copy(p25Link = v) } }
+    Spacer(Modifier.height(8.dp))
+
+    // Which kind of link the current choice leads to: a USB network radio, or a serial line.
+    var network: com.fearmikey.takwave.usb.UsbNetOption? = null
+    if (bluetooth) {
+        BluetoothDevicePicker(settings.p25BtDevice, "Choose the Bluetooth serial adapter on the radio's data cable.") { v ->
+            update { it.copy(p25BtDevice = v) }
+        }
+        Text(
+            "Set the adapter (with its own setup tool) to the radio's data port baud rate, 8N1, and pair it in " +
+                "Android's Bluetooth settings. Over Bluetooth only the framing can be detected; the adapter fixes the rate.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    } else {
+        val networkRadios = remember(deviceTick) { UsbNetDevices.list(context) }
+        // An RNDIS radio also looks like a CDC serial port to the serial library; list it once, as a network radio.
+        val serialPorts = remember(deviceTick) { SerialDevices.list(context).filter { s -> networkRadios.none { it.key == s.key } } }
+        Text("Radio on USB", style = MaterialTheme.typography.labelLarge)
+        val choices = buildList {
+            add("" to "Automatic (a radio on USB first, else the first serial port)")
+            networkRadios.forEach { add(it.key to it.label + if (it.hasPermission) "" else " (permission needed)") }
+            serialPorts.forEach { add(it.key to it.label + " (serial)" + if (it.hasPermission) "" else " (permission needed)") }
+            if (settings.p25Device.isNotEmpty() && networkRadios.none { it.key == settings.p25Device } && serialPorts.none { it.key == settings.p25Device }) {
+                add(settings.p25Device to "${settings.p25Device} (not connected)")
+            }
+        }
+        ChoiceSetting(choices, settings.p25Device) { v -> update { it.copy(p25Device = v) } }
+        if (networkRadios.isEmpty() && serialPorts.isEmpty()) {
+            Text(
+                "Nothing detected. Plug in the radio's USB cable (APX portables), or the USB-to-RS-232 adapter on its data cable.",
+                style = MaterialTheme.typography.bodySmall,
+                color = WarnAmber,
+            )
+        }
+        networkRadios.filter { !it.hasPermission }.forEach { d ->
+            OutlinedButton(onClick = { SerialDevices.requestPermission(context, d.device) }) { Text("Grant access to ${d.label}") }
+        }
+        serialPorts.filter { !it.hasPermission }.forEach { d ->
+            OutlinedButton(onClick = { SerialDevices.requestPermission(context, d.device) }) { Text("Grant access to ${d.label}") }
+        }
+        network = networkRadios.firstOrNull { settings.p25Device.isEmpty() || it.key == settings.p25Device }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    SwitchSetting(
+        "Detect the radio's settings automatically",
+        if (network != null) {
+            "Each time the gateway connects, ask the radio for this phone's address and its own (DHCP), falling back " +
+                "to the addresses below. Nothing is sent over the air while doing so."
+        } else if (bluetooth) {
+            "Each time the gateway connects, find the framing (PPP or SLIP) by asking the radio, and keep the " +
+                "addresses it agrees to. Nothing is sent over the air while detecting."
+        } else {
+            "Each time the gateway connects, find the baud rate and framing (PPP or SLIP) by asking the radio, and keep " +
+                "the addresses it agrees to. Nothing is sent over the air while detecting."
+        },
+        settings.p25AutoDetect,
+    ) { v -> update { it.copy(p25AutoDetect = v) } }
+
+    if (network != null) {
+        Text(
+            "${network.label}: a USB network link, so there is no baud rate or framing to set. The radio's " +
+                "addresses are checked when the gateway starts.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    } else {
+        P25DetectButton(settings, running, update)
+
+        if (!bluetooth) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (settings.p25AutoDetect) "Baud rate (last detected; tried first)" else "Baud rate (must match the radio's data port)",
+                style = MaterialTheme.typography.labelLarge,
+            )
+            ChoiceSetting(SerialLinks.BAUD_RATES.map { it to "$it" }, settings.p25Baud) { v -> update { it.copy(p25Baud = v) } }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (settings.p25AutoDetect) "Framing (last detected)" else "Framing (must match the radio's data port)",
+            style = MaterialTheme.typography.labelLarge,
+        )
+        ChoiceSetting(
+            listOf(IpFraming.PPP to "PPP (addresses are negotiated)", IpFraming.SLIP to "SLIP (fixed addresses)"),
+            settings.p25Framing,
+        ) { v -> update { it.copy(p25Framing = v) } }
+    }
+
+    Spacer(Modifier.height(8.dp))
+    TextSetting(
+        label = "This phone's IP address (radio's \"mobile computer\" IP)",
+        value = settings.p25LocalIp,
+        error = if (Ipv4.parse(settings.p25LocalIp).let { it == null || it == 0 }) "Enter an address such as 192.168.128.2" else null,
+        onChange = { v -> update { it.copy(p25LocalIp = v) } },
+        filter = { it.filter { ch -> ch.isDigit() || ch == '.' }.take(15) },
+    )
+    TextSetting(
+        label = "Radio's IP address on the cable (\"subscriber\" IP)",
+        value = settings.p25RadioIp,
+        error = if (Ipv4.parse(settings.p25RadioIp) == null) "Enter an address such as 192.168.128.1" else null,
+        onChange = { v -> update { it.copy(p25RadioIp = v) } },
+        filter = { it.filter { ch -> ch.isDigit() || ch == '.' }.take(15) },
+    )
+    TextSetting(
+        label = "Send to",
+        value = settings.p25Destinations,
+        error = if (Ipv4.parseList(settings.p25Destinations) == null) "One or more addresses, separated by commas" else null,
+        onChange = { v -> update { it.copy(p25Destinations = v) } },
+        filter = { it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' || ch == ' ' }.take(200) },
+    )
+    IntSetting("UDP port (same on every station)", settings.p25Port, 1024..65535) { v -> update { it.copy(p25Port = v) } }
+    Text(
+        "255.255.255.255 sends every packet once to all radios on the channel; the radio needs Limited Broadcast " +
+            "enabled. Or list the other radios' air-interface IP addresses: each packet then goes out once per " +
+            "address, which costs air time. The radio does the modulation, channel access and keying, so the audio, " +
+            "PTT, transmit and channel access settings are not shown. Not yet tested with a real radio.",
         style = MaterialTheme.typography.bodySmall,
         modifier = Modifier.padding(top = 4.dp),
     )
@@ -653,7 +850,9 @@ internal fun BluetoothKissSettings(settings: Settings, update: ((Settings) -> Se
 /** Paired device and key/unkey commands for Bluetooth serial PTT. Shared by Settings and the setup guide. */
 @Composable
 internal fun BluetoothPttSettings(settings: Settings, update: ((Settings) -> Settings) -> Unit) {
-    BluetoothDevicePicker(settings.btPttDevice, "Choose the device that keys your radio.") { v -> update { it.copy(btPttDevice = v) } }
+    BluetoothDevicePicker(settings.btPttDevice, "Choose the device that keys your radio.", settings, update) { v ->
+        update { it.copy(btPttDevice = v) }
+    }
 
     Spacer(Modifier.height(8.dp))
     Text("Commands", style = MaterialTheme.typography.labelLarge)

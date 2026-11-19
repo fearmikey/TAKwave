@@ -3,6 +3,9 @@ package com.fearmikey.takwave
 
 import android.content.Intent
 import android.graphics.Color
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
+import androidx.core.content.IntentCompat
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -33,12 +36,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fearmikey.takwave.core.profile.TeamProfile
+import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.Settings
+import com.fearmikey.takwave.ptt.SerialDevices
+import com.fearmikey.takwave.ptt.SerialLinks
+import com.fearmikey.takwave.usb.UsbNetDevices
+import com.hoho.android.usbserial.driver.UsbSerialProber
 import com.fearmikey.takwave.ui.AboutScreen
 import com.fearmikey.takwave.ui.CalibrateScreen
 import com.fearmikey.takwave.ui.LogScreen
 import com.fearmikey.takwave.ui.OnboardingScreen
 import com.fearmikey.takwave.ui.ProfileImportDialog
+import com.fearmikey.takwave.ui.RadioDetectedDialog
 import com.fearmikey.takwave.ui.RadioGuideScreen
 import com.fearmikey.takwave.ui.SettingsPage
 import com.fearmikey.takwave.ui.SettingsPageScreen
@@ -55,7 +64,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val container = container
         // On recreation (rotation) the launching intent was already handled.
-        if (savedInstanceState == null) handleProfileLink(intent)
+        if (savedInstanceState == null) {
+            handleProfileLink(intent)
+            handleUsbAttached(intent)
+        }
         setContent {
             TakwaveTheme {
                 TakwaveRoot(container)
@@ -67,6 +79,30 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleProfileLink(intent)
+        handleUsbAttached(intent)
+    }
+
+    /**
+     * A Motorola radio plugged in (the USB device filter starts TAKwave for it). It is only noted
+     * here; the dialog asks before anything changes. Other USB devices need nothing: opening the
+     * app from the filter has already granted access to them.
+     */
+    private fun handleUsbAttached(intent: Intent?) {
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        val device = IntentCompat.getParcelableExtra(intent, UsbManager.EXTRA_DEVICE, UsbDevice::class.java) ?: return
+        if (!SerialLinks.isMotorolaRadio(device)) return
+        val label = device.productName?.takeIf { it.isNotBlank() } ?: "Motorola radio (%04x)".format(device.productId)
+        val link = when {
+            UsbNetDevices.framingOf(device) != null -> DetectedRadio.Link.USB_NETWORK
+            UsbSerialProber.getDefaultProber().probeDevice(device) != null -> DetectedRadio.Link.SERIAL
+            else -> DetectedRadio.Link.NONE
+        }
+        container.detectedRadio.value = DetectedRadio(
+            deviceKey = SerialDevices.keyOf(device),
+            label = label,
+            link = link,
+            system = DetectedRadio.systemOf(device.productName, link),
+        )
     }
 
     /**
@@ -122,11 +158,23 @@ private fun TakwaveRoot(container: AppContainer) {
     val settings: Settings? by container.settingsStore.settings.collectAsStateWithLifecycle(initialValue = null)
     val status by container.status.collectAsStateWithLifecycle()
     val pendingProfile by container.pendingProfile.collectAsStateWithLifecycle()
+    val detectedRadio by container.detectedRadio.collectAsStateWithLifecycle()
 
     // A profile from a link, file or the clipboard is reviewed here, over whatever screen is showing.
     val forReview = pendingProfile
     settings?.let { s ->
         if (forReview != null) ProfileImportDialog(container, s, forReview) { container.pendingProfile.value = null }
+        // A Motorola radio was plugged in. Not asked again when it is already the configured modem.
+        val radio = detectedRadio
+        if (radio != null && forReview == null) {
+            val alreadyUsed = (s.backend == ModemBackend.P25_DATA && s.p25Device == radio.deviceKey && s.p25AutoDetect) ||
+                (s.backend == ModemBackend.DMR_DATA && s.dmrDevice == radio.deviceKey)
+            if (alreadyUsed) {
+                LaunchedEffect(radio) { container.detectedRadio.value = null }
+            } else {
+                RadioDetectedDialog(container, s, radio, status.running) { container.detectedRadio.value = null }
+            }
+        }
     }
 
     // First run (or "Run the setup guide again" in Settings): the guide replaces everything, and

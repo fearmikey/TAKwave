@@ -57,6 +57,7 @@ import com.fearmikey.takwave.core.stats.ChannelHealth
 import com.fearmikey.takwave.core.io.RfState
 import com.fearmikey.takwave.core.sched.Geo
 import com.fearmikey.takwave.data.ModemBackend
+import com.fearmikey.takwave.data.SerialLinkKind
 import com.fearmikey.takwave.data.PttMethod
 import com.fearmikey.takwave.data.Settings
 import com.fearmikey.takwave.engine.RadioStatus
@@ -94,7 +95,9 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
             }
             // Optional here: without it the engine reports that the Bluetooth PTT or TNC is unavailable and does not transmit.
             val usesBluetooth = settings.backend == ModemBackend.KISS_BLUETOOTH ||
-                (settings.backend == ModemBackend.SOFT && settings.pttMethod == PttMethod.BLUETOOTH)
+                (settings.backend == ModemBackend.SOFT && settings.pttMethod == PttMethod.BLUETOOTH) ||
+                (settings.backend == ModemBackend.SERIAL_DATA && settings.serialRadioLink == SerialLinkKind.BLUETOOTH) ||
+                (settings.backend == ModemBackend.P25_DATA && settings.p25Link == SerialLinkKind.BLUETOOTH)
             if (usesBluetooth &&
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !granted(context, Manifest.permission.BLUETOOTH_CONNECT)
             ) {

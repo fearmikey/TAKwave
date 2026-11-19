@@ -83,7 +83,10 @@ class TakwaveService : Service() {
                 ContextCompat.RECEIVER_NOT_EXPORTED,
             )
             receiverRegistered = true
-            val e = RadioEngine(applicationContext, settings, container.status, container.log, container.keyFiles, container.stateFile)
+            val e = RadioEngine(
+                applicationContext, settings, container.status, container.log, container.keyFiles, container.stateFile,
+                saveSettings = { transform -> scope.launch { container.settingsStore.update(transform) } },
+            )
             engine = e
             container.engine = e
             e.start()

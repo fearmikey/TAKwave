@@ -7,6 +7,77 @@ All notable changes to TAKwave are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-18
+
+Over-air payload unchanged.
+
+### Added
+
+- **P25 radio packet data** (Settings > Radio & audio > Modem backend, and a new choice in the
+  setup guide): use a digital P25 radio with the APCO packet data option, such as a Motorola
+  XTS 2500 flashed with Q947/W947, as the modem. Radios from other makers (L3Harris, Kenwood,
+  BK/EF Johnson) that offer IP packet data on USB or a serial cable can be chosen too. TAKwave
+  connects to the radio's serial data cable through a USB-to-RS-232 adapter, speaks PPP or SLIP
+  to it, and sends each frame as a UDP datagram that the radio carries over its own P25 modem,
+  to every radio on the channel (broadcast) or to listed radio addresses. Over-air payload
+  unchanged; see `docs/PROTOCOL.md` section 10. Not yet tested against a real radio.
+- **P25 radio auto-setup.** Plugging a Motorola radio in on its USB cable offers to use it as
+  the modem. With auto-detect on (the default), TAKwave finds the radio's data port baud rate
+  and framing (PPP or SLIP) every time it connects, and keeps the radio's address and the
+  addresses PPP negotiates. Nothing is sent over the air while detecting. A "Detect radio
+  settings now" button runs the same check from Settings and the setup guide.
+- **APX portables over USB** (APX 6000, APX 8000): the radio's USB cable presents it as a small
+  network adapter (RNDIS; CDC-ECM also handled), and TAKwave now drives that link itself, with
+  no root. It gets the addresses from the radio's DHCP server when it has one, finds the radio
+  with ARP, and carries packets exactly as on the serial cable. Plugging the radio in offers to
+  use it. Not yet tested against a real radio.
+- **MOTOTRBO (DMR) radio data** (Settings > Radio & audio > Modem backend, and a new choice in
+  the setup guide): use a Motorola MOTOTRBO radio, such as an XPR 6550, as the modem on its USB
+  programming cable. TAKwave drives the radio's USB network link itself (as for APX portables),
+  gets the addresses from the radio, and sends each frame as a UDP datagram to the team's
+  talkgroup (a group data call; talkgroup 1 is 225.0.0.1) and optionally to listed radio IDs.
+  Sending is paced for DMR's slower data rate. Plugging in a Motorola radio on USB now asks
+  whether it is MOTOTRBO or APX when its name does not say. The radio needs "Forward to PC" on;
+  the help text lists the CPS settings. See `docs/PROTOCOL.md` section 10. Not yet tested
+  against a real radio. Amateur DMR radios (AnyTone, Ailunce, TYT) cannot pass data to a phone
+  and are not supported.
+- **Hytera DMR radios** in the same backend (now "DMR radio data: MOTOTRBO or Hytera"): choose
+  the make, and the network numbers follow it. Hytera defaults are a best guess; not yet tested.
+- **D-STAR and NXDN radio data** (new modem backend and setup guide choices): use an Icom
+  D-STAR radio (IC-705, ID-52, IC-9700 and similar) in DV data mode, slow data or DV Fast Data,
+  or a Kenwood NX / Icom IDAS NXDN radio with transparent data, as the modem. TAKwave reaches it
+  over USB serial (the radio's own port, any port of a dual-port bridge, or an RS-232 adapter)
+  or Bluetooth serial (the radio's own Bluetooth or an adapter). Each frame goes as KISS with
+  its FCS so damaged frames are dropped; sending is paced per radio type. See
+  `docs/PROTOCOL.md` section 10.2. Not yet tested against a real radio.
+- **Fallbacks for the untested digital radios** (Settings > Radio & audio):
+  - D-STAR / NXDN: a **Text encoding** (Base64 lines) for radios that alter bytes or send data
+    line by line. Every station reads both encodings. After repeated damaged packets the app
+    suggests it.
+  - DMR: **how talkgroup packets are handed to the radio** (radio as router, IP multicast, or
+    broadcast), and **custom destination addresses** that replace the computed ones.
+  - All digital radios: **pacing by hand** (data rate and key-up time), and **Log raw radio
+    data**, which records what the radio sends that TAKwave does not use (other ports, damaged
+    packets, raw bytes) for troubleshooting.
+- **Bluetooth LE TNCs.** KISS over Bluetooth can now use the Bluetooth LE KISS service, as offered
+  by the Mobilinkd TNC4 and other BLE TNCs, besides classic Bluetooth serial. A new "Bluetooth
+  link" setting picks classic, Bluetooth LE or Automatic. "Find a Bluetooth LE TNC nearby" uses
+  Android's device chooser, so no location or scan permission is needed. Not yet tested against a
+  real TNC.
+- **P25 over Bluetooth.** The P25 backend can reach a radio through a Bluetooth serial adapter on
+  its RS-232 data cable instead of USB. Auto-detect finds PPP or SLIP through it; the adapter's
+  own setting fixes the baud rate.
+- **Radio hints.** Choosing a paired BTECH UV-PRO, Radioddity GA-5WB, Vero VR-N76, Kenwood
+  TH-D74/TH-D75, Mobilinkd TNC or Icom IC-705/ID-52 explains how TAKwave uses it best and offers
+  a button that sets it up.
+- **Bluetooth PTT presets** for the Kenwood TH-D74/TH-D75 and the Icom IC-705 (CI-V).
+
+### Changed
+
+- Classic Bluetooth connections now also try the serial port without encryption, and for data
+  links (KISS, radio data) any serial service of the radio's own, before giving up. PTT commands
+  still only go to the standard serial port.
+
 ## [0.3.2] - 2026-11-16
 
 ### Added
@@ -171,7 +242,8 @@ First release. Over-air protocol version 0.
 
 - Not yet verified on physical phones and radios. See `docs/TODO.md`.
 
-[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/fearmikey/TAKwave/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/fearmikey/TAKwave/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/fearmikey/TAKwave/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fearmikey/TAKwave/compare/v0.2.0...v0.3.0

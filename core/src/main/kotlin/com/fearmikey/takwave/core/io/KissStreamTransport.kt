@@ -22,12 +22,14 @@ interface KissLink {
  * [connect] opens the link and may block; it throws with a user-readable message when it
  * cannot. The link is reopened automatically after [reconnectDelayMs] when it fails or drops.
  * [name] describes the TNC in error messages. [onStatus] is told when the link comes up, goes
- * down or cannot be opened; the same message is not reported twice in a row.
+ * down or cannot be opened; the same message is not reported twice in a row. [onRaw], when set,
+ * sees every chunk read from the link before KISS decoding, for other framings on the same stream.
  */
 open class KissStreamTransport(
     private val name: String,
     private val reconnectDelayMs: Long = 5_000,
     private val onStatus: (String) -> Unit = {},
+    private val onRaw: ((ByteArray, Int, Int) -> Unit)? = null,
     private val connect: () -> KissLink,
 ) : FrameTransport {
     @Volatile private var running = false
@@ -86,6 +88,7 @@ open class KissStreamTransport(
                 while (running) {
                     val n = input.read(buf)
                     if (n < 0) break
+                    onRaw?.invoke(buf, 0, n)
                     decoder.feed(buf, 0, n)
                 }
                 if (running) report("$name: connection closed by the TNC")
@@ -126,6 +129,25 @@ open class KissStreamTransport(
             true
         } catch (e: Exception) {
             lastError = "KISS write failed: ${e.message ?: e.javaClass.simpleName}"
+            false
+        }
+    }
+
+    /** Writes [bytes] to the link as they are, without KISS framing. False when not connected or the write fails. */
+    fun sendRaw(bytes: ByteArray): Boolean {
+        val out = output
+        if (out == null) {
+            lastError = "$name is not connected"
+            return false
+        }
+        return try {
+            synchronized(writeLock) {
+                out.write(bytes)
+                out.flush()
+            }
+            true
+        } catch (e: Exception) {
+            lastError = "$name: write failed: ${e.message ?: e.javaClass.simpleName}"
             false
         }
     }

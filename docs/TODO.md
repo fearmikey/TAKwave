@@ -21,6 +21,65 @@ has been run end to end.
       offers KISS on the standard SPP service, connects while paired, sends and receives
       TAKwave frames, reconnects after the radio is switched off and on, and whether its TNC
       passes the longest frames (a full chat message, about 270 bytes) or truncates them.
+- [ ] KISS over Bluetooth LE against a real BLE TNC (Mobilinkd TNC4): that the companion device
+      chooser lists it, that the BLE KISS service and characteristics are as in `core/io/BleKiss`,
+      MTU negotiation, acknowledged writes of a 270-byte frame, notifications arriving in order,
+      and reconnecting after the TNC is switched off and on. Also Automatic link choice on a
+      dual-mode TNC3.
+- [ ] The Bluetooth names radios really advertise (UV-PRO, GA-5WB, VR-N76, TH-D74/D75, IC-705,
+      ID-52, TNC4), so `core/radio/BluetoothRadios` recognises them; and whether the TH-D74/D75
+      key with `TX`/`RX` + CR and the IC-705 with CI-V `1C 00` over Bluetooth.
+- [ ] SPP fallbacks: that an adapter refusing the encrypted socket connects without encryption,
+      and whether any supported radio offers its data port only under a vendor service.
+- [ ] P25 packet data through a Bluetooth serial (SPP) adapter on the radio's RS-232 data cable:
+      that the adapter is 8-bit clean at the radio's rate, that framing detection works through it,
+      and that the reconnect after detection succeeds.
+- [ ] P25 packet data with two real P25 radios (Motorola XTS 2500 or similar with Q947/W947),
+      on a conventional simplex channel: which framing (PPP or SLIP) and baud rate the radio's
+      data port actually uses; whether its PPP accepts TAKwave's minimal client (no
+      authentication; LCP and IPCP options); whether 255.255.255.255 with Limited Broadcast
+      reaches the other radio and is passed to its mobile computer, or whether only unicast to
+      air-interface addresses works; whether the radio needs DTR asserted on the data port
+      (TAKwave holds it low); real throughput, to tune the 4 kbit/s / 300 ms pacing estimate;
+      and how lossy it is (one report says about half of raw IP packets got through, while
+      the radio's own text messages were reliable). Also whether the XTS 2500's USB cable
+      appears as a USB serial device on Android at all, and what vendor/product id it reports.
+- [ ] APX 6000 / APX 8000 on USB: that it enumerates as RNDIS (or CDC-ECM) with Motorola's
+      vendor id 0x0CAD on Android, that `Rndis.initialize` succeeds (some devices need the
+      interrupt endpoint read before GET_ENCAPSULATED_RESPONSE answers), whether the radio runs a
+      DHCP server on the link and what it hands out, that ARP and UDP to 255.255.255.255 work,
+      and whether the radio passes UDP to port 50125 from the air to the phone. Also whether
+      the phone powers the radio's USB side or needs a powered OTG hub, and whether CPS-style
+      radio management on the same link (port 8675) interferes.
+- [ ] MOTOTRBO (XPR 6550 or later) on USB: that the programming cable enumerates on Android as
+      RNDIS (or CDC-ECM) with vendor 0x0CAD, and what product id and product name it reports
+      (for `DetectedRadio.systemOf`; until then an unrecognised name asks the operator); that
+      `Rndis.initialize` succeeds; that the radio's DHCP server hands out 192.168.10.2 and names
+      itself as router; that a datagram to 225.0.0.1 sent to the radio's MAC goes out as a group
+      data call and reaches a second radio's phone with "Forward to PC" on, and in what form
+      (destination 225.x.y.z or rewritten to the phone's address; source the sender's 12.x.y.z);
+      which of the three talkgroup delivery settings the radio accepts; how the compressed
+      UDP header setting affects it; real throughput and delay, to tune the 1.2 kbit/s / 500 ms
+      pacing; and how lossy unconfirmed group data is. Also whether CPS on the same link or ARS
+      interfere. The owner's XPR 6550 did not enumerate on two Linux PCs during
+      development (cable or side-connector fault suspected), so none of this has been seen yet.
+- [ ] Hytera DMR on USB: that the cable enumerates as RNDIS or CDC-ECM on Android, its USB ids,
+      DHCP behaviour, the real data forwarding setting names, and whether the radio and
+      talkgroup networks really default to 10 and 225 and route group data like MOTOTRBO.
+- [ ] P25 radios from other makers (L3Harris XG/XL, Kenwood NX-5000, BK/EF Johnson): whether
+      they offer IP packet data on USB (network adapter) or a serial cable (PPP/SLIP), their
+      default cable addresses, and whether radio-to-radio data works without infrastructure.
+- [ ] Icom D-STAR DV data (IC-705, ID-52, IC-9700): that a TAKwave frame written to the data
+      port with DV Data TX on Auto comes out of the other radio's data port byte for byte (8-bit
+      clean; if not, the Text encoding should get through: check which one works), the
+      menu names, which port of the IC-705's USB bridge carries DV data, the Bluetooth data
+      profile on the ID-52 and IC-705, the largest frame the radio buffers before it starts
+      transmitting, and real throughput for slow data and DV Fast Data.
+- [ ] Kenwood NX / Icom IDAS NXDN transparent data: which models and options offer it, the
+      programming settings, whether it is byte transparent, and real throughput.
+- [ ] P25 auto-detect against a real radio: that a radio answers the LCP request or the TTL-1
+      ping within 1.5 s, that the ping is really not forwarded over the air (watch a second
+      radio or a scanner while detecting), and that a SLIP radio's ping reply names its address.
 - [ ] Store and forward with three real stations, including a relay: re-send when a station
       comes into range, no duplicate messages in ATAK, and how much air time it uses on a busy
       channel.
@@ -62,6 +121,23 @@ has been run end to end.
 - [ ] **Hardware-backed key storage.** Keys and the passphrase are stored in app-private
       files, not the Android Keystore.
 - [ ] **Replay protection** for encrypted traffic, and forward secrecy for shared-key modes.
+- [ ] **USB CDC-NCM radios.** RNDIS and CDC-ECM are implemented; NCM is not.
+- [ ] **DHCP lease renewal** on the USB network link. Addresses are fetched on every connect
+      and never renewed; a radio that expires leases quickly would need it.
+- [ ] **P25 on trunked systems.** Untested; needs the system's packet data infrastructure and
+      data registration, which TAKwave neither does nor checks.
+- [ ] **Bridging AFSK, P25, DMR, D-STAR and NXDN stations.** A station uses one backend at a time.
+- [ ] **USB detection for Hytera, Icom and Kenwood radios.** Only Motorola radios open the setup
+      dialog when plugged in (DECISIONS 143).
+- [ ] **D-STAR gateway (reflector) routing.** Only local RF (simplex or a repeater without
+      linking) is covered; data through D-STAR gateways is untested.
+- [ ] **MOTOTRBO text messages (TMS, port 4007) and location reports (LRRP, port 4001).** A
+      bridge would show radio text messages (including from amateur DMR radios that send
+      Motorola-format SMS) as GeoChat and radio GPS reports as map positions. Not started; needs
+      captures from a real radio (DECISIONS 137).
+- [ ] **MOTOTRBO on Capacity Plus / Linked Capacity Plus.** Needs data revert channels; untested.
+- [ ] **Amateur DMR radios** (AnyTone, Ailunce, TYT). They cannot pass data to a phone; not
+      supported (DECISIONS 136).
 - [ ] **Time slots with the KISS backend.** The external TNC does its own channel access; the
       slot settings are ignored there (the settings screen hides them).
 - [ ] **Slot coordination over the air.** Slot numbers are configured by hand or derived from

@@ -12,6 +12,51 @@ import com.fearmikey.takwave.engine.RadioStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
+ * A radio seen on USB. [deviceKey] is "vendorId:productId" as used by the P25 and MOTOTRBO device
+ * settings; [link] is how TAKwave can talk to it, if at all; [system] is what its USB product name
+ * suggests (MOTOTRBO and APX radios share Motorola's vendor id and both use a USB network link).
+ */
+data class DetectedRadio(val deviceKey: String, val label: String, val link: Link, val system: System = System.UNKNOWN) {
+    enum class System {
+        /** P25: APX or ASTRO 25. */
+        P25,
+
+        /** DMR: MOTOTRBO. */
+        DMR,
+
+        /** The product name does not say; the operator is asked. */
+        UNKNOWN,
+    }
+
+    companion object {
+        /**
+         * Guesses the radio family from its USB product name. A serial link is always P25 (MOTOTRBO
+         * radios have no USB serial data port). Unverified against real descriptors (docs/TODO.md).
+         */
+        fun systemOf(productName: String?, link: Link): System {
+            if (link == Link.SERIAL) return System.P25
+            val name = productName?.uppercase() ?: return System.UNKNOWN
+            return when {
+                "TRBO" in name || "XPR" in name || "DMR" in name -> System.DMR
+                "APX" in name || "ASTRO" in name || "P25" in name -> System.P25
+                else -> System.UNKNOWN
+            }
+        }
+    }
+
+    enum class Link {
+        /** A virtual network adapter (RNDIS or CDC-ECM), as on APX portables. */
+        USB_NETWORK,
+
+        /** A USB serial port (CDC ACM), carrying PPP or SLIP. */
+        SERIAL,
+
+        /** Nothing TAKwave can use. */
+        NONE,
+    }
+}
+
+/**
  * Manual dependency wiring (no DI framework). One instance lives for the life of the process and
  * is shared by the activity and the foreground service.
  */
@@ -27,6 +72,9 @@ class AppContainer(context: Context) {
      * the clipboard). It is only applied after they confirm it in the dialog.
      */
     val pendingProfile = MutableStateFlow<String?>(null)
+
+    /** A Motorola radio that was just plugged in, waiting for the operator to decide whether to use it. */
+    val detectedRadio = MutableStateFlow<DetectedRadio?>(null)
 
     /** The engine owned by the running service, or null when the service is stopped. */
     @Volatile

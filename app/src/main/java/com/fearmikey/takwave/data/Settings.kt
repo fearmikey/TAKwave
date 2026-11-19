@@ -11,6 +11,15 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.fearmikey.takwave.core.ax25.Ax25Address
 import com.fearmikey.takwave.core.gateway.Gateway
+import com.fearmikey.takwave.core.io.P25DataConfig
+import com.fearmikey.takwave.core.io.SerialDataProfile
+import com.fearmikey.takwave.core.io.SerialEncoding
+import com.fearmikey.takwave.core.ip.MulticastDelivery
+import com.fearmikey.takwave.core.ip.DmrIp
+import com.fearmikey.takwave.core.ip.DmrVendor
+import com.fearmikey.takwave.core.ip.IpFraming
+import com.fearmikey.takwave.core.ip.Ipv4
+import com.fearmikey.takwave.core.ip.P25ProbeResult
 import com.fearmikey.takwave.core.radio.Band
 import com.fearmikey.takwave.core.radio.ChannelWidth
 import com.fearmikey.takwave.core.radio.RadioGuide
@@ -32,13 +41,52 @@ enum class PttLine { RTS, DTR }
 enum class BtPttPreset(val label: String, val key: String, val unkey: String) {
     KENWOOD("Kenwood / Elecraft CAT (TX; and RX;)", "TX;", "RX;"),
     YAESU("Yaesu CAT (TX1; and TX0;)", "TX1;", "TX0;"),
+    KENWOOD_HT("Kenwood TH-D74 / TH-D75 (TX and RX, ending in CR)", "TX\\r", "RX\\r"),
+    ICOM_IC705(
+        "Icom IC-705 CI-V, address A4 (Bluetooth serial port set to CI-V)",
+        "\\xFE\\xFE\\xA4\\xE0\\x1C\\x00\\x01\\xFD",
+        "\\xFE\\xFE\\xA4\\xE0\\x1C\\x00\\x00\\xFD",
+    ),
     CUSTOM("Custom commands", "", ""),
+}
+
+/** Which kind of Bluetooth link reaches a KISS TNC. */
+enum class BluetoothKissLink(val label: String) {
+    AUTO("Automatic (classic serial, else Bluetooth LE)"),
+    CLASSIC("Classic Bluetooth serial (SPP)"),
+    BLE("Bluetooth LE (BLE KISS service, for example Mobilinkd TNC4)"),
 }
 
 enum class ModemBackend(val label: String) {
     SOFT("Soft modem (audio)"),
     KISS_TCP("KISS over TCP"),
-    KISS_BLUETOOTH("KISS over Bluetooth (radio with built-in TNC)"),
+    KISS_BLUETOOTH("KISS over Bluetooth (radio with built-in TNC, or Bluetooth TNC)"),
+    P25_DATA("P25 radio packet data (USB, serial data cable or Bluetooth adapter)"),
+    DMR_DATA("DMR radio data: MOTOTRBO or Hytera (USB cable)"),
+    SERIAL_DATA("D-STAR or NXDN radio data (USB or Bluetooth serial)"),
+}
+
+/** Radios whose data port passes bytes over the air unchanged, for [ModemBackend.SERIAL_DATA]. */
+enum class SerialRadioType(val label: String, val profile: SerialDataProfile) {
+    DSTAR_SLOW("Icom D-STAR, DV data (slow data, voice still possible)", SerialDataProfile.DSTAR_SLOW),
+    DSTAR_FAST("Icom D-STAR, DV Fast Data (about 3 times faster)", SerialDataProfile.DSTAR_FAST),
+    KENWOOD_NXDN("Kenwood NX (NXDN) transparent data", SerialDataProfile.NXDN),
+    ICOM_IDAS("Icom IDAS (NXDN) data", SerialDataProfile.NXDN);
+
+    val isDstar: Boolean get() = this == DSTAR_SLOW || this == DSTAR_FAST
+}
+
+/** The make's name as shown to the operator. */
+val DmrVendor.label: String
+    get() = when (this) {
+        DmrVendor.MOTOTRBO -> "MOTOTRBO"
+        DmrVendor.HYTERA -> "Hytera"
+    }
+
+/** How the phone reaches a serial data radio. */
+enum class SerialLinkKind(val label: String) {
+    USB("USB serial (radio's USB port or a USB-to-RS-232 adapter)"),
+    BLUETOOTH("Bluetooth serial (radio's own Bluetooth or a Bluetooth serial adapter)"),
 }
 
 enum class EncryptionMode(val label: String) {
@@ -110,6 +158,68 @@ data class Settings(
     val kissPort: Int = 8001,
     /** MAC address of the paired radio or TNC that speaks KISS over Bluetooth serial; empty means none chosen. */
     val kissBtDevice: String = "",
+    /** Classic serial or Bluetooth LE to the KISS TNC. */
+    val kissBtLink: BluetoothKissLink = BluetoothKissLink.AUTO,
+    /** "vendorId:productId" of the USB serial port wired to the P25 radio's data port; empty means the first one found. */
+    val p25Device: String = "",
+    /** How the phone reaches the P25 radio: USB (network or serial), or a Bluetooth serial adapter on its data cable. */
+    val p25Link: SerialLinkKind = SerialLinkKind.USB,
+    /** MAC address of the paired Bluetooth serial adapter on the P25 radio's data cable; empty means none chosen. */
+    val p25BtDevice: String = "",
+    val p25Baud: Int = 9600,
+    val p25Framing: IpFraming = IpFraming.PPP,
+    /** This end of the serial link (the radio's "mobile computer" address). */
+    val p25LocalIp: String = "192.168.128.2",
+    /** The radio's end of the serial link. */
+    val p25RadioIp: String = "192.168.128.1",
+    /** Where frames go: the limited broadcast, or the other radios' air-interface addresses. */
+    val p25Destinations: String = "255.255.255.255",
+    val p25Port: Int = P25DataConfig.DEFAULT_PORT,
+    /**
+     * Find the baud rate and framing each time the radio is connected (and keep what was found),
+     * and keep the addresses PPP negotiates. On by default.
+     */
+    val p25AutoDetect: Boolean = true,
+    /** "vendorId:productId" of the MOTOTRBO radio on USB; empty means the first USB network radio found. */
+    val dmrDevice: String = "",
+    /** This end of the USB link (the PC address the radio's DHCP server normally hands out). */
+    val dmrLocalIp: String = DmrIp.DEFAULT_LOCAL_ADDRESS,
+    /** The radio's end of the USB link. */
+    val dmrRadioIp: String = DmrIp.DEFAULT_RADIO_ADDRESS,
+    /** Ask the radio for the addresses (DHCP) on every connect and keep them. On by default. */
+    val dmrAutoAddresses: Boolean = true,
+    /** Talkgroup that every frame is sent to as a group data call; 0 for none. */
+    val dmrTalkgroup: Int = 1,
+    /** Radio IDs that every frame is also sent to as individual data calls, comma separated. */
+    val dmrRadioIds: String = "",
+    /** First octet of radio air-interface addresses (CPS: CAI Network). */
+    val dmrCaiNetwork: Int = DmrIp.DEFAULT_CAI_NETWORK,
+    /** First octet of talkgroup addresses (CPS: CAI Group Network). */
+    val dmrCaiGroupNetwork: Int = DmrIp.DEFAULT_CAI_GROUP_NETWORK,
+    val dmrPort: Int = P25DataConfig.DEFAULT_PORT,
+    /** Make of the DMR radio; seeds the network numbers. */
+    val dmrVendor: DmrVendor = DmrVendor.MOTOTRBO,
+    val serialRadioType: SerialRadioType = SerialRadioType.DSTAR_SLOW,
+    val serialRadioLink: SerialLinkKind = SerialLinkKind.USB,
+    /** "vendorId:productId" of the USB serial port; empty means the first one found. */
+    val serialRadioUsbDevice: String = "",
+    /** Port of a multi-port USB serial device, from 0 (an IC-705's data port is the second, 1). */
+    val serialRadioUsbPort: Int = 0,
+    val serialRadioBaud: Int = 9600,
+    /** MAC address of the paired radio or Bluetooth serial adapter; empty means none chosen. */
+    val serialRadioBtDevice: String = "",
+    /** How frames are written to a serial data radio; both are always read. */
+    val serialEncoding: SerialEncoding = SerialEncoding.BINARY,
+    /** Where DMR talkgroup (multicast) datagrams go on the USB link. */
+    val dmrGroupDelivery: MulticastDelivery = MulticastDelivery.RADIO,
+    /** IP addresses typed by hand that replace the talkgroup and radio IDs when not blank. */
+    val dmrCustomDestinations: String = "",
+    /** Digital radio data rate for pacing (P25, DMR, D-STAR, NXDN) in bit/s; 0 uses the radio type's default. */
+    val radioDataBps: Int = 0,
+    /** Digital radio key-up time for pacing in ms; -1 uses the radio type's default. */
+    val radioKeyUpMs: Int = -1,
+    /** Log what a digital radio sends that TAKwave does not use, and raw serial bytes, for troubleshooting. */
+    val radioDataLog: Boolean = false,
     val encryption: EncryptionMode = EncryptionMode.OFF,
     val cipher: CipherChoice = CipherChoice.AES_GCM,
     val passphrase: String = "",
@@ -160,6 +270,91 @@ data class Settings(
 
     /** True when frames go out with the callsign sealed inside the encrypted payload. */
     val callsignHidden: Boolean get() = hideCallsign && encryption != EncryptionMode.OFF
+
+    /** These settings with what a probe of the radio's data port found. */
+    fun withP25Detected(result: P25ProbeResult): Settings = copy(
+        p25Framing = result.framing,
+        p25Baud = result.baud,
+        p25RadioIp = result.radioAddress?.let { Ipv4.format(it) } ?: p25RadioIp,
+    )
+
+    /** What is wrong with the P25 packet data settings, or null when they can be used. */
+    val p25Problem: String?
+        get() = when {
+            p25Link == SerialLinkKind.BLUETOOTH && p25BtDevice.isEmpty() -> "No Bluetooth adapter chosen for the radio."
+            Ipv4.parse(p25LocalIp).let { it == null || it == 0 } -> "The phone's IP address is not valid."
+            Ipv4.parse(p25RadioIp) == null -> "The radio's IP address is not valid."
+            Ipv4.parseList(p25Destinations) == null -> "The destination addresses are not valid."
+            else -> null
+        }
+
+    /** The addresses every frame goes to on a MOTOTRBO radio, or null when the settings do not give any. */
+    val dmrDestinations: List<Int>?
+        get() = if (dmrCustomDestinations.isNotBlank()) {
+            Ipv4.parseList(dmrCustomDestinations)
+        } else {
+            DmrIp.parseIds(dmrRadioIds)?.let { DmrIp.destinations(dmrTalkgroup, it, dmrCaiNetwork, dmrCaiGroupNetwork) }
+        }
+
+    /** What is wrong with the MOTOTRBO data settings, or null when they can be used. */
+    val dmrProblem: String?
+        get() = when {
+            Ipv4.parse(dmrLocalIp).let { it == null || it == 0 } -> "The phone's IP address is not valid."
+            Ipv4.parse(dmrRadioIp) == null -> "The radio's IP address is not valid."
+            dmrCustomDestinations.isNotBlank() -> if (Ipv4.parseList(dmrCustomDestinations) == null) "The custom addresses are not valid." else null
+            dmrTalkgroup != 0 && !DmrIp.validId(dmrTalkgroup) -> "The talkgroup ID is not valid."
+            DmrIp.parseIds(dmrRadioIds) == null -> "The radio IDs are not valid."
+            !DmrIp.validCaiNetwork(dmrCaiNetwork) -> "The CAI network is not valid."
+            !DmrIp.validCaiGroupNetwork(dmrCaiGroupNetwork) -> "The CAI group network is not valid."
+            dmrDestinations == null -> "Set a talkgroup or at least one radio ID to send to."
+            else -> null
+        }
+
+    /** These settings switched to DMR radios of make [vendor], with that make's network numbers. */
+    fun withDmrVendor(vendor: DmrVendor): Settings = copy(
+        dmrVendor = vendor,
+        dmrCaiNetwork = vendor.caiNetwork,
+        dmrCaiGroupNetwork = vendor.caiGroupNetwork,
+    )
+
+    /** The pacing the selected digital radio backend uses by default (bit/s to key-up ms), or null for the others. */
+    val radioPacingDefaults: Pair<Int, Int>?
+        get() = when (backend) {
+            ModemBackend.P25_DATA -> P25DataConfig.P25_THROUGHPUT_BPS to P25DataConfig.P25_KEY_UP_MS
+            ModemBackend.DMR_DATA -> P25DataConfig.DMR_THROUGHPUT_BPS to P25DataConfig.DMR_KEY_UP_MS
+            ModemBackend.SERIAL_DATA -> serialRadioType.profile.throughputBps to serialRadioType.profile.keyUpMs
+            else -> null
+        }
+
+    /** The pacing in effect for the selected digital radio backend: the overrides where set, else its defaults. */
+    val radioPacing: Pair<Int, Int>
+        get() {
+            val (bps, keyUp) = radioPacingDefaults ?: (P25DataConfig.P25_THROUGHPUT_BPS to P25DataConfig.P25_KEY_UP_MS)
+            return (if (radioDataBps > 0) radioDataBps else bps) to (if (radioKeyUpMs >= 0) radioKeyUpMs else keyUp)
+        }
+
+    /** What is wrong with the serial data radio settings, or null when they can be used. */
+    val serialRadioProblem: String?
+        get() = when {
+            serialRadioLink == SerialLinkKind.BLUETOOTH && serialRadioBtDevice.isEmpty() -> "No Bluetooth device chosen for the radio."
+            else -> null
+        }
+
+    /** One line describing the serial data radio setup. */
+    val serialRadioSummary: String
+        get() = serialRadioType.label.substringBefore(" (") + when (serialRadioLink) {
+            SerialLinkKind.USB -> " over USB serial at $serialRadioBaud baud"
+            SerialLinkKind.BLUETOOTH -> " over Bluetooth serial"
+        }
+
+    /** One line describing where MOTOTRBO frames go, for summaries and the log. */
+    val dmrTargetsText: String
+        get() = if (dmrCustomDestinations.isNotBlank()) {
+            Ipv4.parseList(dmrCustomDestinations)?.joinToString { Ipv4.format(it) } ?: "invalid custom addresses"
+        } else buildList {
+            if (dmrTalkgroup != 0) add("talkgroup $dmrTalkgroup")
+            DmrIp.parseIds(dmrRadioIds)?.forEach { add("radio $it") }
+        }.joinToString().ifEmpty { "nowhere" }
 
     companion object {
         const val DEFAULT_TAK_PORT = 8099
@@ -217,6 +412,39 @@ class SettingsStore(context: Context) {
             kissHost = p[KISS_HOST] ?: d.kissHost,
             kissPort = p[KISS_PORT] ?: d.kissPort,
             kissBtDevice = p[KISS_BT_DEVICE] ?: d.kissBtDevice,
+            kissBtLink = enumOf(p[KISS_BT_LINK], d.kissBtLink),
+            p25Device = p[P25_DEVICE] ?: d.p25Device,
+            p25Link = enumOf(p[P25_LINK], d.p25Link),
+            p25BtDevice = p[P25_BT_DEVICE] ?: d.p25BtDevice,
+            p25Baud = p[P25_BAUD] ?: d.p25Baud,
+            p25Framing = enumOf(p[P25_FRAMING], d.p25Framing),
+            p25LocalIp = p[P25_LOCAL_IP] ?: d.p25LocalIp,
+            p25RadioIp = p[P25_RADIO_IP] ?: d.p25RadioIp,
+            p25Destinations = p[P25_DESTINATIONS] ?: d.p25Destinations,
+            p25Port = p[P25_PORT] ?: d.p25Port,
+            p25AutoDetect = p[P25_AUTO_DETECT] ?: d.p25AutoDetect,
+            dmrDevice = p[DMR_DEVICE] ?: d.dmrDevice,
+            dmrLocalIp = p[DMR_LOCAL_IP] ?: d.dmrLocalIp,
+            dmrRadioIp = p[DMR_RADIO_IP] ?: d.dmrRadioIp,
+            dmrAutoAddresses = p[DMR_AUTO_ADDRESSES] ?: d.dmrAutoAddresses,
+            dmrTalkgroup = p[DMR_TALKGROUP] ?: d.dmrTalkgroup,
+            dmrRadioIds = p[DMR_RADIO_IDS] ?: d.dmrRadioIds,
+            dmrCaiNetwork = p[DMR_CAI_NETWORK] ?: d.dmrCaiNetwork,
+            dmrCaiGroupNetwork = p[DMR_CAI_GROUP_NETWORK] ?: d.dmrCaiGroupNetwork,
+            dmrPort = p[DMR_PORT] ?: d.dmrPort,
+            dmrVendor = enumOf(p[DMR_VENDOR], d.dmrVendor),
+            serialRadioType = enumOf(p[SERIAL_RADIO_TYPE], d.serialRadioType),
+            serialRadioLink = enumOf(p[SERIAL_RADIO_LINK], d.serialRadioLink),
+            serialRadioUsbDevice = p[SERIAL_RADIO_USB_DEVICE] ?: d.serialRadioUsbDevice,
+            serialRadioUsbPort = p[SERIAL_RADIO_USB_PORT] ?: d.serialRadioUsbPort,
+            serialRadioBaud = p[SERIAL_RADIO_BAUD] ?: d.serialRadioBaud,
+            serialRadioBtDevice = p[SERIAL_RADIO_BT_DEVICE] ?: d.serialRadioBtDevice,
+            serialEncoding = enumOf(p[SERIAL_ENCODING], d.serialEncoding),
+            dmrGroupDelivery = enumOf(p[DMR_GROUP_DELIVERY], d.dmrGroupDelivery),
+            dmrCustomDestinations = p[DMR_CUSTOM_DESTINATIONS] ?: d.dmrCustomDestinations,
+            radioDataBps = p[RADIO_DATA_BPS] ?: d.radioDataBps,
+            radioKeyUpMs = p[RADIO_KEY_UP_MS] ?: d.radioKeyUpMs,
+            radioDataLog = p[RADIO_DATA_LOG] ?: d.radioDataLog,
             encryption = enumOf(p[ENCRYPTION], d.encryption),
             cipher = enumOf(p[CIPHER], d.cipher),
             passphrase = p[PASSPHRASE] ?: d.passphrase,
@@ -271,6 +499,39 @@ class SettingsStore(context: Context) {
         p[KISS_HOST] = s.kissHost
         p[KISS_PORT] = s.kissPort
         p[KISS_BT_DEVICE] = s.kissBtDevice
+        p[KISS_BT_LINK] = s.kissBtLink.name
+        p[P25_DEVICE] = s.p25Device
+        p[P25_LINK] = s.p25Link.name
+        p[P25_BT_DEVICE] = s.p25BtDevice
+        p[P25_BAUD] = s.p25Baud
+        p[P25_FRAMING] = s.p25Framing.name
+        p[P25_LOCAL_IP] = s.p25LocalIp
+        p[P25_RADIO_IP] = s.p25RadioIp
+        p[P25_DESTINATIONS] = s.p25Destinations
+        p[P25_PORT] = s.p25Port
+        p[P25_AUTO_DETECT] = s.p25AutoDetect
+        p[DMR_DEVICE] = s.dmrDevice
+        p[DMR_LOCAL_IP] = s.dmrLocalIp
+        p[DMR_RADIO_IP] = s.dmrRadioIp
+        p[DMR_AUTO_ADDRESSES] = s.dmrAutoAddresses
+        p[DMR_TALKGROUP] = s.dmrTalkgroup
+        p[DMR_RADIO_IDS] = s.dmrRadioIds
+        p[DMR_CAI_NETWORK] = s.dmrCaiNetwork
+        p[DMR_CAI_GROUP_NETWORK] = s.dmrCaiGroupNetwork
+        p[DMR_PORT] = s.dmrPort
+        p[DMR_VENDOR] = s.dmrVendor.name
+        p[SERIAL_RADIO_TYPE] = s.serialRadioType.name
+        p[SERIAL_RADIO_LINK] = s.serialRadioLink.name
+        p[SERIAL_RADIO_USB_DEVICE] = s.serialRadioUsbDevice
+        p[SERIAL_RADIO_USB_PORT] = s.serialRadioUsbPort
+        p[SERIAL_RADIO_BAUD] = s.serialRadioBaud
+        p[SERIAL_RADIO_BT_DEVICE] = s.serialRadioBtDevice
+        p[SERIAL_ENCODING] = s.serialEncoding.name
+        p[DMR_GROUP_DELIVERY] = s.dmrGroupDelivery.name
+        p[DMR_CUSTOM_DESTINATIONS] = s.dmrCustomDestinations
+        p[RADIO_DATA_BPS] = s.radioDataBps
+        p[RADIO_KEY_UP_MS] = s.radioKeyUpMs
+        p[RADIO_DATA_LOG] = s.radioDataLog
         p[ENCRYPTION] = s.encryption.name
         p[CIPHER] = s.cipher.name
         p[PASSPHRASE] = s.passphrase
@@ -323,6 +584,39 @@ class SettingsStore(context: Context) {
         val KISS_HOST = stringPreferencesKey("kiss_host")
         val KISS_PORT = intPreferencesKey("kiss_port")
         val KISS_BT_DEVICE = stringPreferencesKey("kiss_bt_device")
+        val KISS_BT_LINK = stringPreferencesKey("kiss_bt_link")
+        val P25_DEVICE = stringPreferencesKey("p25_device")
+        val P25_LINK = stringPreferencesKey("p25_link")
+        val P25_BT_DEVICE = stringPreferencesKey("p25_bt_device")
+        val P25_BAUD = intPreferencesKey("p25_baud")
+        val P25_FRAMING = stringPreferencesKey("p25_framing")
+        val P25_LOCAL_IP = stringPreferencesKey("p25_local_ip")
+        val P25_RADIO_IP = stringPreferencesKey("p25_radio_ip")
+        val P25_DESTINATIONS = stringPreferencesKey("p25_destinations")
+        val P25_PORT = intPreferencesKey("p25_port")
+        val P25_AUTO_DETECT = booleanPreferencesKey("p25_auto_detect")
+        val DMR_DEVICE = stringPreferencesKey("dmr_device")
+        val DMR_LOCAL_IP = stringPreferencesKey("dmr_local_ip")
+        val DMR_RADIO_IP = stringPreferencesKey("dmr_radio_ip")
+        val DMR_AUTO_ADDRESSES = booleanPreferencesKey("dmr_auto_addresses")
+        val DMR_TALKGROUP = intPreferencesKey("dmr_talkgroup")
+        val DMR_RADIO_IDS = stringPreferencesKey("dmr_radio_ids")
+        val DMR_CAI_NETWORK = intPreferencesKey("dmr_cai_network")
+        val DMR_CAI_GROUP_NETWORK = intPreferencesKey("dmr_cai_group_network")
+        val DMR_PORT = intPreferencesKey("dmr_port")
+        val DMR_VENDOR = stringPreferencesKey("dmr_vendor")
+        val SERIAL_RADIO_TYPE = stringPreferencesKey("serial_radio_type")
+        val SERIAL_RADIO_LINK = stringPreferencesKey("serial_radio_link")
+        val SERIAL_RADIO_USB_DEVICE = stringPreferencesKey("serial_radio_usb_device")
+        val SERIAL_RADIO_USB_PORT = intPreferencesKey("serial_radio_usb_port")
+        val SERIAL_RADIO_BAUD = intPreferencesKey("serial_radio_baud")
+        val SERIAL_RADIO_BT_DEVICE = stringPreferencesKey("serial_radio_bt_device")
+        val SERIAL_ENCODING = stringPreferencesKey("serial_encoding")
+        val DMR_GROUP_DELIVERY = stringPreferencesKey("dmr_group_delivery")
+        val DMR_CUSTOM_DESTINATIONS = stringPreferencesKey("dmr_custom_destinations")
+        val RADIO_DATA_BPS = intPreferencesKey("radio_data_bps")
+        val RADIO_KEY_UP_MS = intPreferencesKey("radio_key_up_ms")
+        val RADIO_DATA_LOG = booleanPreferencesKey("radio_data_log")
         val ENCRYPTION = stringPreferencesKey("encryption")
         val PASSPHRASE = stringPreferencesKey("passphrase")
         val CIPHER = stringPreferencesKey("cipher")

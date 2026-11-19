@@ -12,4 +12,6 @@
     <usb-device vendor-id="6790" product-id="29987" />
     <!-- Prolific PL2303 -->
     <usb-device vendor-id="1659" product-id="8963" />
+    <!-- Motorola radios on their USB cable (vendor 0x0CAD, any product): offers P25 packet data setup -->
+    <usb-device vendor-id="3245" />
 </resources>

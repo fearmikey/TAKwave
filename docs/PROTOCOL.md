@@ -441,3 +441,90 @@ byte (section 4.4).
   2 minutes of the last time it was sent or heard; a station transmits at most 6 repeats in any
   10 minutes; at most 16 messages of each kind (own, relayed) are held. Fresh traffic always
   goes before repeats.
+
+## 10. Transport over P25 packet data
+
+A station may use a P25 radio's packet data service instead of AFSK (or a DMR radio's data
+service, section 10.1, or a digital radio's transparent serial data port, section 10.2). Any
+make of P25 radio that offers IP packet data to a computer can be used this way. This changes only how a
+frame reaches the other stations; the frame, payload and every rule above are unchanged, so it
+does not change the protocol version. AFSK and P25 stations do not hear each other unless
+something bridges them, which TAKwave does not do.
+
+| Layer | Value |
+|-------|-------|
+| Air interface | The radio's own P25 (Project 25 Phase 1, C4FM) packet data. Channel access, error correction and keying are the radio's. |
+| Network | IPv4. The station is the radio's "mobile computer", on a serial link to the radio (USB serial, or a Bluetooth serial adapter on the radio's data cable) using PPP (RFC 1661/1662/1332, no authentication) or SLIP (RFC 1055), or on a USB network link (Ethernet II over RNDIS or CDC-ECM, as on APX portables) with ARP, addresses from the radio's DHCP server when it has one. |
+| Transport | UDP, source and destination port both the configured port, default **50125**. All stations of a group use the same port. |
+| Datagram | Exactly one AX.25 UI frame per datagram, as in section 1 but without flags, bit stuffing or FCS (the UDP checksum and the P25 CRCs protect it). |
+| Destination | `255.255.255.255` (the radio sends it to every radio on the channel; needs the radio's Limited Broadcast setting), or one datagram per listed air-interface address of the other radios. |
+
+A station may probe the serial link to find the radio's baud rate and framing (PPP LCP
+Configure-Request, and ICMP echo requests with TTL 1 to the radio's own address). On a USB
+network link it sends ARP requests and DHCP requests (IP TTL 1). These stay on the cable and are
+never meant for the air; apart from DHCP, which is broadcast by design, no probe is sent to a
+broadcast address.
+
+Receive rules: only UDP datagrams to the configured port are used, and their payload goes
+through the same checks as a frame from the AFSK demodulator (section 5). Pings (ICMP echo) from
+the radio side are answered; nothing else is forwarded anywhere.
+
+The AX.25 source address stays the station identification, exactly as on AFSK. The radio adds
+its own P25 unit ID on the air, which is not a substitute for it.
+
+The radio-side settings this needs (packet data option in the radio's flash, subscriber and
+mobile computer addresses, a unique air-interface address per radio, packet data mode) are
+vendor configuration, not part of this protocol; TAKwave's help text lists what has been
+reported to work for Motorola ASTRO 25 radios on conventional channels.
+
+### 10.1 DMR data (MOTOTRBO, Hytera)
+
+A MOTOTRBO or Hytera radio's data service is used the same way: same datagram, same port, same
+receive rules. Only the air interface and the addressing differ. DMR, P25 and AFSK stations do
+not hear each other, and MOTOTRBO and Hytera data calls are not assumed to interoperate. Hytera
+radios use the same address scheme with their own network numbers (TAKwave starts from 10 for
+radios and 225 for talkgroups; unverified).
+
+| Layer | Value |
+|-------|-------|
+| Air interface | ETSI DMR (Tier II) data calls, carried by the radio. Channel access, error correction, header compression and keying are the radio's. |
+| Network | IPv4 on the radio's USB network link (Ethernet II over RNDIS or CDC-ECM) with ARP; addresses from the radio's DHCP server (as shipped: radio 192.168.10.1, computer 192.168.10.2), else configured. |
+| Destination | The talkgroup address *G*.*t* (a group data call), where *G* is the CAI group network (default 225) and *t* the 24-bit talkgroup ID, so talkgroup 1 is `225.0.0.1`; and/or one datagram per listed radio, *N*.*r*, where *N* is the CAI network (default 12) and *r* the 24-bit radio ID. IDs run from 1 to 16776415. |
+| Link-layer delivery | Unicast datagrams go to the radio's own MAC address. Talkgroup (multicast) datagrams go, by station setting, to the radio's MAC (default), to the IPv4 multicast MAC (01:00:5e plus the low 23 bits), or to the Ethernet broadcast. This stays on the cable and does not change what goes over the air. |
+
+All stations of a group use the same talkgroup, CAI networks and port. The radio must be
+programmed to forward received data to the computer ("Forward to PC"), and all radios should use
+the same compressed-UDP-header setting. On the USB link a station sends only DHCP and ARP
+besides its frames, and neither goes over the air.
+
+The AX.25 source address stays the station identification; the radio's DMR ID is not a
+substitute for it.
+
+### 10.2 Transparent serial data (D-STAR, NXDN)
+
+Some radios carry the bytes written to their data port over the air and deliver them unchanged
+from the other radios' data ports: Icom D-STAR radios in DV data mode (slow data, or DV Fast
+Data) and Kenwood NX / Icom IDAS NXDN radios with transparent data. A station may use such a
+radio as its modem. The radio keys itself when data arrives. The frame, payload and all rules
+above are unchanged, so the protocol version is unchanged.
+
+| Layer | Value |
+|-------|-------|
+| Air interface | The radio's: D-STAR DV slow data (about 900 bit/s of user data) or DV Fast Data, or NXDN data. |
+| Link to the radio | USB serial or Bluetooth serial (SPP), 8N1, the radio's data port baud rate. |
+| Framing | **Binary:** one KISS data frame (FEND, command byte 0x00, escaped data, FEND) per TAKwave frame. **Text:** one line per frame, `TW1:` then the standard Base64 (RFC 4648, with padding) of the content, then CR LF. |
+| Content | The AX.25 UI frame as in section 1 without flags or bit stuffing, **followed by its 16-bit FCS** (CRC-16-CCITT as in AX.25, low byte first). |
+
+A station sends one of the two framings (binary by default; text for radios whose data path
+is not 8-bit clean or works line by line) and **must accept both** on receive, so stations with
+different settings interoperate. Lines that do not start with `TW1:` are ignored; the digit is
+the text framing's version, to be raised only for an incompatible change.
+
+The FCS is required because these channels may pass damaged or incomplete bytes without telling
+the receiver. A receiver drops any frame whose FCS does not match, then treats the rest as in
+section 5. KISS framing lets it find the next frame after damage. All stations on a channel must
+use the same radio type and data mode; D-STAR slow data and DV Fast Data stations do not hear
+each other.
+
+On D-STAR the radio also sends its own callsign in every transmission header; the AX.25 source
+address remains TAKwave's station identification.

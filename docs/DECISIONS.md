@@ -363,3 +363,216 @@ Judgment calls made while building TAKwave 0.1.0, with the reasoning. Newest sec
     nothing can be left keyed by TAKwave. The Status screen shows "(not connected)".
 112. **The standard SPP service UUID is used.** Not verified against a real UV-PRO; if a radio
     offers KISS on a different service, the connect step is the place to change (TODO.md).
+    Superseded by 152, which adds fallbacks.
+
+## P25 packet data
+
+113. **A P25 radio is used as a data modem through its packet data service, not its voice
+    path.** Feeding AFSK audio into a P25 radio's microphone would be vocoded and destroyed, and
+    the radio's P25 modem cannot be driven directly. Motorola ASTRO 25 radios with the APCO
+    packet data option (Q947/W947) expose that service as IP to a "mobile computer" on their
+    data port, which is what TAKwave becomes. Community reports say this works radio to radio
+    on conventional and simplex channels without infrastructure, at a few kbit/s.
+114. **Frames travel as UDP datagrams, one AX.25 frame each.** Keeping the whole AX.25 frame
+    means the gateway, the callsign identification, store and forward and encryption are the
+    same as on AFSK, at a cost of about 16 header bytes. UDP, not TCP: the channel is
+    broadcast, lossy and slow, and the gateway already de-duplicates and repeats. The default
+    port 50125 stays clear of the ports Motorola radios use for their own services (4001 to
+    4012, 8675).
+115. **IP, PPP and SLIP are written in `:core`, in user space.** Android gives apps no way to
+    attach a PPP or SLIP interface to a USB serial port without root. TAKwave needs only to
+    send and receive its own datagrams, so a small IPv4/UDP layer plus SLIP and a minimal PPP
+    client (LCP without authentication, IPCP, every control character escaped so no ACCM is
+    negotiated) is enough, and it is unit-tested. PPP's FCS-16 is the AX.25 CRC, so `Crc16`
+    is reused. A radio that demands PAP or CHAP is not supported.
+116. **Both PPP and SLIP are offered, PPP by default.** Motorola documentation for data on
+    ASTRO radios describes PPP over the RS-232 data cable; hobbyist reports describe SLIP. The
+    framing must match the radio's data port setting.
+117. **The serial link is a USB serial port (`usb-serial-for-android`), RTS and DTR held low.**
+    A USB-to-RS-232 adapter on the radio's data cable is the reliable path; a radio whose USB
+    cable appears as a CDC ACM serial device is listed too. A radio that appears as a USB
+    network adapter (RNDIS) is not supported. Holding RTS and DTR low means a PTT interface
+    chosen by mistake can never key a radio.
+118. **Sending is paced by an air time estimate** (300 ms key-up plus the datagram at
+    4 kbit/s) because the radio has a small queue: TAKwave's priority queue, not the radio's
+    buffer, decides what goes next, and an emergency alert is not stuck behind a backlog. The
+    same estimate feeds the channel statistics.
+119. **Several destination addresses multiply air time** (one datagram each), so broadcast is
+    the default and the log says so when more than one is set.
+120. **FX.25, CSMA and time slots are not used with P25**; the radio does its own error
+    correction and channel access. The link is reopened every 5 s after a failure, and frames
+    are refused while it is down, as with KISS over Bluetooth (111): the radio keys itself and
+    a frame cut off mid-way is discarded by it.
+121. **The radio's data port settings are found by asking, not guessed** (`core/ip/P25Probe`).
+    At each baud rate, last known first, TAKwave writes a PPP LCP Configure-Request and, for
+    SLIP, an ICMP echo request with TTL 1 to the configured and the default radio address, and
+    listens 1.5 s. Only a reply that passes PPP's FCS-16 with a PPP protocol number, or an IPv4
+    header checksum, counts, so noise at a wrong rate and a cable echoing our own bytes cannot
+    be mistaken for a radio. Worst case about 8 s for five rates.
+122. **Detection must not put anything on the air.** LCP is link-local; TTL 1 means a radio
+    that would route the ping (because the address is not its own) drops it instead. No ping
+    goes to a broadcast address, because a radio with Limited Broadcast forwards those over
+    the air. Detection never transmits on behalf of the station, so the callsign rule is not
+    touched.
+123. **Auto-detect is on by default and runs on every connect**, because a radio swapped or
+    reprogrammed between sessions should just work, and the last result is tried first so a
+    known radio costs well under two seconds. What it finds (framing, baud, the radio address
+    from a SLIP ping reply, the addresses PPP negotiates) is written back to the settings; the
+    running engine keeps using its own copy.
+124. **A Motorola radio on USB (vendor 0x0CAD) is offered, never switched to silently.** The
+    USB device filter starts TAKwave when one is plugged in, and a dialog asks before the modem
+    backend changes (as with team profiles, 93). A radio that offers no USB serial interface
+    gets an explanation instead. A plain USB-to-RS-232 adapter cannot be told apart from a PTT
+    adapter, so for the data-cable path the operator picks the backend once and detection does
+    the rest.
+
+## APX portables (USB network)
+
+125. **APX portables are reached over their USB network interface (RNDIS), in user space.**
+    APX 6000 and 8000 portables have no RS-232 data cable; on USB they present a virtual
+    network adapter. Android gives apps no way to bring such an adapter up as a system network
+    interface, so TAKwave drives it with `UsbDeviceConnection`: RNDIS control messages on
+    endpoint 0 and data on the bulk endpoints (`app/usb/UsbNet.kt`), with the protocol logic
+    (RNDIS messages, Ethernet, ARP, DHCP) in `:core` and unit-tested against a simulated radio.
+    CDC-ECM is handled too, because it costs little and some devices use it. The existing
+    IPv4/UDP layer and the transport are reused unchanged above it.
+126. **Addresses come from the radio's DHCP server when it has one, else from the settings.**
+    A computer plugged into an APX normally gets its address that way. Three DHCP attempts
+    2 s apart, sent with IP TTL 1, then the configured addresses. The radio's address is the
+    DHCP router (else the server identifier); its MAC comes from ARP. What was learned is saved
+    like PPP's negotiated addresses (123).
+127. **All traffic goes to the radio's MAC address, broadcasts to the Ethernet broadcast.**
+    The radio is the only other station on the link and routes over the air, so there is no
+    routing table; ARP requests for the phone's address are answered so the radio can send.
+128. **A USB network radio wins over a serial port** when the P25 device is "Automatic", and an
+    RNDIS device (which the serial library also matches as CDC) is listed once, as a network
+    radio. Each read is exactly one bulk transfer (RNDIS may batch several frames in one); writes
+    that are a whole number of USB packets get one pad byte instead of a zero-length packet.
+129. **RNDIS keep-alives are answered** by polling the control channel once a second; the
+    interrupt endpoint is not used. HALT is sent on close.
+
+## MOTOTRBO (DMR) data
+
+130. **MOTOTRBO radios are their own modem backend (`DMR_DATA`), reusing the P25 transport.**
+    On USB they present the same kind of network adapter as an APX, and their data service is
+    plain IP, so `P25DataTransport`, `EthernetIpLink` and `UsbNetDevices` carry them unchanged.
+    A separate backend (rather than a "system" switch inside P25) keeps the settings honest:
+    MOTOTRBO has no serial PPP/SLIP path and is addressed by talkgroup and radio IDs, not by
+    IP addresses typed by hand. The over-air TAKwave format is unchanged.
+131. **Destinations are entered as DMR IDs and mapped the MOTOTRBO way** (`core/ip/DmrIp`):
+    radio *r* is CAI network.*r* (default 12), talkgroup *t* is CAI group network.*t*
+    (default 225). Both networks are settings because CPS lets them be changed. The default
+    destination is talkgroup 1: one group data call reaches every radio with that talkgroup in
+    its receive group list, so it plays the part of P25's limited broadcast.
+132. **Talkgroup (multicast) datagrams go to the radio's MAC, not the Ethernet broadcast**
+    (by default; `EthernetIpLink` `MulticastDelivery.RADIO`, see 145). MOTOTRBO documentation has the computer route
+    225.x.y.z through the radio like any remote network; whether the radio would also accept
+    them as Ethernet multicast or broadcast is unknown, while unicast to its MAC is what any
+    router accepts. P25 keeps the old behaviour.
+133. **DMR pacing is 500 ms key-up plus the datagram at 1.2 kbit/s.** One DMR timeslot carries
+    about 2.4 kbit/s raw at rate 3/4, less once the data header, CSBK preambles and channel
+    access are counted. Erring slow keeps the radio's queue empty so TAKwave's priorities hold.
+    The estimate still counts the full 28-byte IP/UDP header even though the radio can
+    compress it, for the same reason.
+134. **Addresses come from the radio's DHCP server by default** (MOTOTRBO radios run one on USB,
+    handing out 192.168.10.2 with the radio at 192.168.10.1), saved like APX's (126). With it
+    off, the configured addresses are used.
+135. **A plugged-in Motorola radio is told apart by its USB product name**: "TRBO", "XPR" or
+    "DMR" means MOTOTRBO, "APX", "ASTRO" or "P25" means P25, a serial link always means P25.
+    Otherwise the dialog asks. Both families use vendor 0x0CAD; the product ids are not known
+    yet, so no id table is guessed.
+136. **Amateur DMR radios are not a backend.** AnyTone, Ailunce, TYT and similar radios have
+    no way to pass packet data to a computer, so there is nothing to connect to; the help text
+    points them to analog FM. Driving an MMDVM hotspot directly was considered and left out:
+    every station would need its own hotspot of about 10 mW, and the handhelds still could not
+    deliver data to a phone.
+137. **No MOTOTRBO text-message (TMS) or location (LRRP) bridge yet.** Translating ATAK chat
+    to radio text messages, and radio GPS reports to map positions, would let DMR radios
+    without TAKwave take part, but it is a second over-air format. It waits for captures from
+    a real radio so it is built against the actual bytes rather than from memory.
+
+## More digital radios
+
+138. **Hytera is a second make inside the DMR backend, not a backend of its own.** Its USB
+    cable presents the same kind of network adapter and its data service maps IDs to addresses
+    the same way, so only the network numbers differ (`DmrVendor`, radios 10 by default).
+    Switching the make resets the networks to that make's values. The Hytera values were
+    written without documentation at hand and are flagged as a guess in the UI and TODO.
+139. **P25 radios from other makers use the existing P25 backend unchanged.** The backend
+    already accepts any USB network radio or USB serial port, and auto-detect asks the radio
+    for its addresses. Only Motorola radios (vendor 0x0CAD) open the setup dialog when plugged
+    in, because no other maker's USB ids are known; the others are chosen in Settings.
+140. **D-STAR and NXDN share one backend (`SERIAL_DATA`): a radio whose data port passes bytes
+    over the air.** For TAKwave they are the same thing, a byte pipe through a radio that keys
+    itself; only the speed differs. The radio type picks the pacing (`SerialDataProfile`) and
+    the help text. The link is a USB serial port (any port of a multi-port bridge, since the
+    IC-705's data port is its second) or a Bluetooth serial link, reusing the KISS-over-stream
+    link handling (`KissStreamTransport`).
+141. **Frames on a byte pipe carry their FCS inside KISS** (PROTOCOL 10.2). Unlike a TNC or an
+    IP stack, these channels do not promise to drop damaged bytes, and a wrong position on the
+    map is worse than a lost one. The AX.25 FCS is reused rather than inventing a check, and
+    KISS gives resynchronisation for free.
+142. **Pacing is conservative per radio type**: D-STAR slow data 900 bit/s, DV Fast Data
+    2.8 kbit/s, NXDN 1.8 kbit/s, plus 400-500 ms key-up. Icom and Kenwood radios buffer only a
+    little serial data before transmitting, and TAKwave's queue must stay in charge.
+143. **No detection or dialog for Icom, Kenwood or Hytera radios on USB.** Their USB ids and
+    menus were not verifiable while this was written; the operator picks the backend.
+
+## Hedges for untested radios
+
+The digital radio backends were written without the radios, so each assumption most likely to
+be wrong got a fallback the operator can switch to, instead of a code change after field tests.
+
+144. **A text framing for byte-pipe radios, always decoded** (PROTOCOL 10.2). If a D-STAR
+    slow-data path or an NXDN data port turns out not to be 8-bit clean, or to send data only
+    line by line, `TW1:` + Base64 lines get through using printable ASCII only, at a third more
+    air time. Receivers read both framings at once, so a team can switch one station at a time.
+    After 5 damaged frames the engine says so once and points to this setting.
+145. **Where talkgroup datagrams go on the USB cable is a setting** (`MulticastDelivery`): the
+    radio's MAC (default; what a router accepts), the IPv4 multicast MAC (what a Windows PC,
+    which MOTOTRBO's tools were written for, would send), or the Ethernet broadcast (the old P25
+    behaviour, still P25's default). Only the cable changes, never the air format.
+146. **DMR destinations can be typed as IP addresses** that replace the computed talkgroup and
+    radio addresses, for radios (Hytera especially) whose numbering differs from the defaults.
+147. **Pacing can be set by hand** for every digital radio backend, one data rate and key-up
+    pair shared by them, defaulting to the radio type's estimate. The log says which is in use.
+148. **A raw-data log, off by default.** For P25 and DMR it reports every datagram that is not
+    TAKwave's (port, addresses, first 48 bytes as hex); for serial radios raw received bytes
+    (at most 20 chunks a minute), damaged frames and foreign text lines. That is what is needed
+    to fix a radio that does not work, and to build the MOTOTRBO text and location bridge (137)
+    later from real captures. It stays on the phone; the UI warns that it holds received traffic.
+
+## More Bluetooth
+
+149. **Bluetooth LE TNCs use the BLE KISS service, inside the existing `KISS_BLUETOOTH` backend.**
+    Mobilinkd's TNC4 (and newer TNC3 firmware, and other BLE TNCs) offer KISS on a GATT service
+    (`core/io/BleKiss`): the app writes the KISS byte stream to one characteristic and gets the
+    TNC's stream as notifications of another. `app/ptt/BleKissLink` turns that into a `KissLink`
+    (notifications feed `core/io/ByteQueueInputStream`; writes are split to the negotiated MTU and
+    acknowledged one at a time), so `KissStreamTransport` does framing, reconnecting and status
+    exactly as for classic serial. A link setting picks classic, BLE or Automatic (BLE for an
+    LE-only or unpaired device, else classic then BLE). Not verified against a real TNC.
+150. **BLE TNCs that are not paired are found with Android's companion device chooser**
+    (`CompanionDeviceManager`, filtered on the BLE KISS service UUID). The system scans and the
+    operator picks, so the rule of 65 holds: TAKwave never scans, and needs neither the scan nor
+    the location permission. A device picked there may be connected like a paired one; any other
+    unpaired device is still refused.
+151. **P25 packet data may use a Bluetooth serial adapter on the radio's RS-232 data cable.**
+    PPP/SLIP and the transport are unchanged; only the byte stream differs. Auto-detect finds the
+    framing only, at the stored rate, because the adapter's own setting fixes the line rate and an
+    RFCOMM socket cannot change it. The link is reopened 500 ms after detection, as some adapters
+    refuse an immediate reconnect.
+152. **Classic serial connects try more than the standard secure SPP socket.** First SPP with an
+    encrypted link, then SPP without encryption (some adapters refuse the first), then, for data
+    links only (KISS, digital radio data), up to three vendor-specific serial services from the
+    device's cached SDP record (refreshed in the background when missing). PTT never tries vendor
+    services, so key and unkey commands only ever go to a standard serial port (65). The log says
+    which service worked when it was not the first. This replaces the single UUID of 112.
+153. **Supported radios are recognised by their Bluetooth name, as advice** (`core/radio/
+    BluetoothRadios`): the picker explains how the radio is best used (UV-PRO, GA-5WB, VR-N76 and
+    TH-D74/D75: built-in KISS TNC; Mobilinkd TNC4: BLE; IC-705 and ID-52: D-STAR data) and offers a
+    button that sets it up. Nothing changes until tapped, an unknown name gets no hint, and the
+    setup guide only explains (its steps follow the radio setup page).
+154. **Two more Bluetooth PTT presets**: Kenwood TH-D74 / TH-D75 (`TX`/`RX` with CR) and Icom
+    IC-705 CI-V at its default address A4 (`1C 00 01` / `1C 00 00`). Presets are stored by name,
+    so existing settings are unaffected.

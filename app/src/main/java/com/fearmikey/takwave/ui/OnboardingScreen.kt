@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -48,11 +49,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fearmikey.takwave.AppContainer
 import com.fearmikey.takwave.core.ax25.Ax25Address
 import com.fearmikey.takwave.data.ModemBackend
 import com.fearmikey.takwave.data.PttMethod
+import com.fearmikey.takwave.data.SerialRadioType
 import com.fearmikey.takwave.data.Settings
+import com.fearmikey.takwave.data.label
 import kotlinx.coroutines.launch
 
 /** How the radio is attached. Picking one decides which quick-start steps follow. */
@@ -71,12 +75,33 @@ private enum class RadioSetup(val label: String, val detail: String) {
         "Audio through a cable or USB sound card; the radio is keyed by a command over a Bluetooth serial link.",
     ),
     BLUETOOTH_TNC(
-        "Radio with built-in Bluetooth TNC",
-        "A radio such as the BTECH UV-PRO does the modem work itself. TAKwave sends it packets over Bluetooth; no cables.",
+        "Radio with built-in Bluetooth TNC, or Bluetooth TNC",
+        "A radio such as the BTECH UV-PRO or Kenwood TH-D75, or a Bluetooth TNC such as a Mobilinkd (classic or " +
+            "Bluetooth LE), does the modem work itself. TAKwave sends it packets over Bluetooth; no cables to the phone.",
     ),
     KISS_TNC(
         "External KISS TNC",
         "A hardware TNC or Dire Wolf does the modem work. TAKwave connects to it over TCP.",
+    ),
+    P25_RADIO(
+        "P25 radio with packet data",
+        "A digital P25 radio with packet data, such as a Motorola APX 6000 / 8000 on its USB cable, an XTS 2500 on " +
+            "its serial data cable (through a USB or Bluetooth serial adapter), or an L3Harris or Kenwood P25 radio, " +
+            "carries the packets with its own modem.",
+    ),
+    DMR_RADIO(
+        "DMR radio (MOTOTRBO or Hytera)",
+        "A Motorola MOTOTRBO radio such as an XPR 6550, or a Hytera radio, on its USB programming cable carries the " +
+            "packets as DMR data calls. (Amateur DMR radios such as AnyTone cannot; use them in analog FM with a cable setup above.)",
+    ),
+    DSTAR_RADIO(
+        "Icom D-STAR radio",
+        "An IC-705, ID-52, IC-9700 or similar in DV data mode carries the packets. TAKwave connects over USB or Bluetooth.",
+    ),
+    NXDN_RADIO(
+        "NXDN radio (Kenwood NX or Icom IDAS)",
+        "A radio with transparent serial data carries the packets. TAKwave connects through a USB-to-RS-232 or " +
+            "Bluetooth serial adapter on its data cable.",
     ),
     ACOUSTIC(
         "No radio yet (acoustic test)",
@@ -84,7 +109,7 @@ private enum class RadioSetup(val label: String, val detail: String) {
     ),
 }
 
-private enum class Step { WELCOME, PERMISSIONS, OFFER, CALLSIGN, RADIO, AUDIO, PTT, KISS, TRANSMIT, DONE }
+private enum class Step { WELCOME, PERMISSIONS, OFFER, CALLSIGN, RADIO, AUDIO, PTT, KISS, P25, DMR, SERIAL_DATA, TRANSMIT, DONE }
 
 private fun stepsFor(setup: RadioSetup?): List<Step> = buildList {
     add(Step.WELCOME)
@@ -103,6 +128,9 @@ private fun stepsFor(setup: RadioSetup?): List<Step> = buildList {
             add(Step.TRANSMIT)
         }
         RadioSetup.KISS_TNC, RadioSetup.BLUETOOTH_TNC -> add(Step.KISS)
+        RadioSetup.P25_RADIO -> add(Step.P25)
+        RadioSetup.DMR_RADIO -> add(Step.DMR)
+        RadioSetup.DSTAR_RADIO, RadioSetup.NXDN_RADIO -> add(Step.SERIAL_DATA)
         RadioSetup.ACOUSTIC, null -> {}
     }
     add(Step.DONE)
@@ -116,6 +144,16 @@ private fun applySetup(s: Settings, setup: RadioSetup): Settings = when (setup) 
     RadioSetup.BLUETOOTH -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.BLUETOOTH)
     RadioSetup.BLUETOOTH_TNC -> s.copy(backend = ModemBackend.KISS_BLUETOOTH)
     RadioSetup.KISS_TNC -> s.copy(backend = ModemBackend.KISS_TCP)
+    RadioSetup.P25_RADIO -> s.copy(backend = ModemBackend.P25_DATA)
+    RadioSetup.DMR_RADIO -> s.copy(backend = ModemBackend.DMR_DATA)
+    RadioSetup.DSTAR_RADIO -> s.copy(
+        backend = ModemBackend.SERIAL_DATA,
+        serialRadioType = if (s.serialRadioType.isDstar) s.serialRadioType else SerialRadioType.DSTAR_SLOW,
+    )
+    RadioSetup.NXDN_RADIO -> s.copy(
+        backend = ModemBackend.SERIAL_DATA,
+        serialRadioType = if (s.serialRadioType.isDstar) SerialRadioType.KENWOOD_NXDN else s.serialRadioType,
+    )
     RadioSetup.ACOUSTIC -> s.copy(backend = ModemBackend.SOFT, pttMethod = PttMethod.VOX, inputDevice = "", outputDevice = "")
 }
 
@@ -138,6 +176,7 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
     val steps = stepsFor(setup)
     val step = steps[index.coerceIn(0, steps.lastIndex)]
     val deviceTick = rememberDeviceTick()
+    val status by container.status.collectAsStateWithLifecycle()
 
     BackHandler(enabled = index > 0) { index-- }
 
@@ -187,7 +226,9 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
             }
         },
     ) { padding ->
-        // Keyed by step so each page starts scrolled to the top with fresh text fields.
+        // Keyed by step so each page starts scrolled to the top with fresh text fields. Device hints only
+        // explain here: the steps follow the radio setup picked on its own page.
+        CompositionLocalProvider(LocalAllowBackendSwitch provides false) {
         key(step) {
             val scroll = rememberScrollState()
             Column(
@@ -252,6 +293,35 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
                             IntSetting("KISS TNC port", settings.kissPort, 1..65535) { v -> update { it.copy(kissPort = v) } }
                         }
                     }
+                    Step.P25 -> {
+                        StepHeader(
+                            "P25 radio",
+                            "Plug in the radio's cable and turn the radio on. An APX portable on USB is found and set up " +
+                                "by itself; for a serial data cable, press Detect. Tap the \"i\" for what the radio itself needs.",
+                        )
+                        Section("P25 radio packet data", info = HelpText.P25_DATA) {
+                            P25DataSettings(settings, deviceTick.intValue, status.running) { update(it) }
+                        }
+                    }
+                    Step.DMR -> {
+                        StepHeader(
+                            "DMR radio",
+                            "Plug in the radio's USB programming cable and turn the radio on, then set the talkgroup your " +
+                                "team uses. Tap the \"i\" for what the radio's programming needs.",
+                        )
+                        Section("DMR radio data", info = HelpText.DMR_DATA) {
+                            DmrDataSettings(settings, deviceTick.intValue) { update(it) }
+                        }
+                    }
+                    Step.SERIAL_DATA -> {
+                        StepHeader(
+                            "Digital radio data port",
+                            "Choose the radio and how the phone reaches it. Tap the \"i\" for the radio menu settings.",
+                        )
+                        Section("D-STAR or NXDN radio data", info = HelpText.SERIAL_DATA) {
+                            SerialDataSettings(settings, deviceTick.intValue) { update(it) }
+                        }
+                    }
                     Step.TRANSMIT -> {
                         StepHeader(
                             "Transmit timing and level",
@@ -274,6 +344,7 @@ fun OnboardingScreen(container: AppContainer, settings: Settings) {
                 }
                 Spacer(Modifier.height(16.dp))
             }
+        }
         }
     }
 }
@@ -443,6 +514,18 @@ private fun DonePage(settings: Settings, setup: RadioSetup?) {
                 if (settings.kissBtDevice.isEmpty()) "TNC: no Bluetooth device chosen yet" else "TNC: Bluetooth ${settings.kissBtDevice}",
                 style = MaterialTheme.typography.bodyMedium,
             )
+        } else if (settings.backend == ModemBackend.P25_DATA) {
+            Text(
+                settings.p25Problem ?: "P25 packet data: ${settings.p25Framing.name} at ${settings.p25Baud} baud",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        } else if (settings.backend == ModemBackend.DMR_DATA) {
+            Text(
+                settings.dmrProblem ?: "${settings.dmrVendor.label} data to ${settings.dmrTargetsText}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        } else if (settings.backend == ModemBackend.SERIAL_DATA) {
+            Text(settings.serialRadioProblem ?: settings.serialRadioSummary, style = MaterialTheme.typography.bodyMedium)
         } else {
             Text("TNC: ${settings.kissHost}:${settings.kissPort}", style = MaterialTheme.typography.bodyMedium)
         }
