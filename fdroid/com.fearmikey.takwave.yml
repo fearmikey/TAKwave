@@ -14,14 +14,14 @@ Repo: https://github.com/fearmikey/TAKwave.git
 Binaries: https://github.com/fearmikey/TAKwave/releases/download/v%v/app-release.apk
 
 Builds:
-  - versionName: 0.3.2
-    versionCode: 5
-    commit: 98d6722d616306dbbd4b97a898a84d1c29ea772a
+  - versionName: 0.4.0
+    versionCode: 6
+    commit: 001cad6a2aeed24fa75dd571b36c47700b354ced
     subdir: app
     gradle:
       - yes
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 0.3.2
-CurrentVersionCode: 5
+CurrentVersion: 0.4.0
+CurrentVersionCode: 6
