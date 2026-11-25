@@ -315,8 +315,16 @@ ML Kit, Play Billing or Play Core artifact appears anywhere in the dependency gr
 
 ### Release signing
 
-Release builds are signed when a `keystore.properties` file exists in the project root. Both
-that file and the keystore are git-ignored; never commit them.
+Published releases are built by `scripts/build-release.sh vX.Y.Z`: it clones the pushed tag into
+a temporary directory, builds it clean exactly as F-Droid's recipe does, and signs the result with
+`apksigner`, adding only the signature. The APK is therefore reproducible: F-Droid can rebuild it
+from the tag and check that its build matches ours byte for byte. The signed APK lands in
+`dist/vX.Y.Z/TAKwave-X.Y.Z.apk`. The keystore path and passwords are read from
+`~/.config/takwave-release/release.env` (mode 600), or prompted for.
+
+For local signed builds only, Gradle also signs release builds when a `keystore.properties`
+file exists in the project root. Both that file and the keystore are git-ignored; never commit
+them.
 
 ```properties
 storeFile=TAKwave-Release.jks

@@ -1,7 +1,9 @@
 Categories:
   - Connectivity
+  - Radio
 License: GPL-3.0-or-later
-AuthorName: fearmikey
+AuthorName: Mike (fearmikey)
+AuthorWebSite: https://github.com/fearmikey
 SourceCode: https://github.com/fearmikey/TAKwave
 IssueTracker: https://github.com/fearmikey/TAKwave/issues
 Changelog: https://github.com/fearmikey/TAKwave/blob/HEAD/CHANGELOG.md
@@ -11,15 +13,24 @@ AutoName: TAKwave
 
 RepoType: git
 Repo: https://github.com/fearmikey/TAKwave.git
-Binaries: https://github.com/fearmikey/TAKwave/releases/download/v%v/app-release.apk
+Binaries: https://github.com/fearmikey/TAKwave/releases/download/v%v/TAKwave-%v.apk
 
 Builds:
   - versionName: 0.4.0
     versionCode: 6
-    commit: 001cad6a2aeed24fa75dd571b36c47700b354ced
+    commit: 2cf1952edf40e793cfd5d2c7011df7be4093cce9
     subdir: app
+    sudo:
+      - apt-get update
+      - apt-get install -y openjdk-25-jdk-headless
+      - update-alternatives --auto java
     gradle:
       - yes
+    rm:
+      - gradle/gradle-daemon-jvm.properties
+    prebuild: sed -i -e '/foojay-resolver/d' ../settings.gradle.kts
+
+AllowedAPKSigningKeys: aa758ce5a29b8165063485a52049d17718d3653d6d8382df287e1a6acfa8e464
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags

@@ -189,7 +189,7 @@
     "thirdParty": "com.google.zxing:core (Apache-2.0) in :app for QR generation only",
     "fossGuard": "app/build.gradle.kts task checkFossDependencies (runs before preBuild)",
     "storeIcon": "root build.gradle.kts task generateFastlaneIcon",
-    "release": "see AGENTS.md 'Release & publishing workflow'"
+    "release": "scripts/build-release.sh <vX.Y.Z>: clones the pushed tag, applies the F-Droid recipe's rm/prebuild steps, ./gradlew --no-daemon assembleRelease, apksigner (alignment-preserved, v2+v3) -> dist/<tag>/TAKwave-X.Y.Z.apk, checks cert vs recipe AllowedAPKSigningKeys, fdroidserver verify_apks. Secrets: ~/.config/takwave-release/release.env. Full procedure and current F-Droid state: AGENTS.md 'Release workflow'"
   },
   "docs": ["README.md", "docs/PROTOCOL.md", "docs/DECISIONS.md", "docs/TODO.md", "CHANGELOG.md", "AGENTS.md"],
   "packaging": {
