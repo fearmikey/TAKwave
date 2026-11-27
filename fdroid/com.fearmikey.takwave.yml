@@ -16,9 +16,9 @@ Repo: https://github.com/fearmikey/TAKwave.git
 Binaries: https://github.com/fearmikey/TAKwave/releases/download/v%v/TAKwave-%v.apk
 
 Builds:
-  - versionName: 0.4.0
-    versionCode: 6
-    commit: 2cf1952edf40e793cfd5d2c7011df7be4093cce9
+  - versionName: 0.4.1
+    versionCode: 7
+    commit: 42417c60f4a3742743d985b74a591c6508a68c15
     subdir: app
     sudo:
       - apt-get update
@@ -34,5 +34,5 @@ AllowedAPKSigningKeys: aa758ce5a29b8165063485a52049d17718d3653d6d8382df287e1a6ac
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 0.4.0
-CurrentVersionCode: 6
+CurrentVersion: 0.4.1
+CurrentVersionCode: 7
