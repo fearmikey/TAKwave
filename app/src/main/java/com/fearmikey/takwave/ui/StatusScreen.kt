@@ -153,7 +153,9 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
 
         Section("Radio") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                RfBadge(if (status.running) status.rf else null)
+                // A radio or TNC that keys itself never reports TX or RX; all that is known is whether its link is up.
+                val linkUp = status.linkUp
+                if (status.running && linkUp != null) LinkBadge(linkUp) else RfBadge(if (status.running) status.rf else null)
                 Spacer(Modifier.width(12.dp))
                 Text(status.backendInfo.ifEmpty { settings.backend.label }, style = MaterialTheme.typography.bodyMedium)
             }
@@ -171,14 +173,15 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Input level", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                if (settings.backend == ModemBackend.SOFT) {
+            // Only the soft modem hears the radio's audio; the other backends have no level to show.
+            if (settings.backend == ModemBackend.SOFT) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Input level", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
                     TextButton(onClick = onCalibrate) { Text("Adjust levels") }
                 }
+                LevelMeter(status.level, status.peak)
+                Spacer(Modifier.height(8.dp))
             }
-            LevelMeter(status.level, status.peak)
-            Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 Stat("TAK clients", status.clients.toString())
                 Stat("TX queue", status.queueDepth.toString())
@@ -211,7 +214,7 @@ fun StatusScreen(container: AppContainer, settings: Settings, status: RadioStatu
         BatteryCard()
 
         val health = status.health
-        if (status.running && health != null) ChannelHealthSection(health)
+        if (status.running && health != null) ChannelHealthSection(health, selfKeyed = status.linkUp != null)
 
         Section("Heard") {
             if (status.heard.isEmpty()) {
@@ -235,6 +238,16 @@ private fun RfBadge(state: RfState?) {
         RfState.IDLE -> "IDLE" to IdleGrey
         null -> "OFF" to IdleGrey
     }
+    Badge(label, color)
+}
+
+@Composable
+private fun LinkBadge(up: Boolean) {
+    if (up) Badge("LINK UP", RxGreen) else Badge("NO LINK", WarnAmber)
+}
+
+@Composable
+private fun Badge(label: String, color: Color) {
     Text(
         label,
         color = Color.Black,
@@ -322,12 +335,12 @@ private fun HeardAlertCard(a: HeardAlert, local: Pair<Double, Double>?, nowMs: L
 }
 
 @Composable
-private fun ChannelHealthSection(h: ChannelHealth) {
+private fun ChannelHealthSection(h: ChannelHealth, selfKeyed: Boolean) {
     val minutes = maxOf(1L, h.windowMs / 60_000L)
     Section("Channel health (last $minutes min)", info = HelpText.CHANNEL_HEALTH) {
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             Stat("Channel busy", h.busyFraction?.let { percent(it) } ?: "n/a")
-            Stat("My air time", "${percent(h.ownAirtimeFraction)} (${h.ownAirtimeMs / 1000} s)")
+            Stat(if (selfKeyed) "My air time (est.)" else "My air time", "${percent(h.ownAirtimeFraction)} (${h.ownAirtimeMs / 1000} s)")
             Stat("Repaired by FX.25", h[ChannelEvent.RX_REPAIRED].toString())
         }
         Spacer(Modifier.height(8.dp))
@@ -337,10 +350,19 @@ private fun ChannelHealthSection(h: ChannelHealth) {
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Sent: ${h[ChannelEvent.TX]} new, ${h[ChannelEvent.TX_REPEAT]} repeats, ${h[ChannelEvent.TX_FAILED]} failed, " +
+            (if (selfKeyed) "Handed to the radio: " else "Sent: ") +
+                "${h[ChannelEvent.TX]} new, ${h[ChannelEvent.TX_REPEAT]} repeats, ${h[ChannelEvent.TX_FAILED]} failed, " +
                 "${h[ChannelEvent.QUEUE_DROPPED]} dropped from the queue",
             style = MaterialTheme.typography.bodySmall,
         )
+        if (selfKeyed) {
+            Text(
+                "The radio or TNC keys itself and does not report back, so TAKwave cannot tell whether a packet went " +
+                    "out on the air. The air time is an estimate.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
         val hints = buildList {
             if ((h.busyFraction ?: 0f) > ChannelHealth.BUSY_WARNING) {
                 add("The channel is congested. Lengthen the PLI interval or turn on time slots.")
@@ -348,7 +370,12 @@ private fun ChannelHealthSection(h: ChannelHealth) {
             if (h.ownAirtimeFraction > ChannelHealth.AIRTIME_WARNING) {
                 add("This station is using a large share of the channel. Lengthen the PLI interval or lower the repeat limits.")
             }
-            if (h[ChannelEvent.TX_FAILED] > 0) add("Some packets could not get on the air in time; see the log (list icon, top bar).")
+            if (h[ChannelEvent.TX_FAILED] > 0) {
+                add(
+                    if (selfKeyed) "Some packets were not taken by the radio, or it reported them undelivered; see the log (list icon, top bar)."
+                    else "Some packets could not get on the air in time; see the log (list icon, top bar).",
+                )
+            }
             if (h[ChannelEvent.RX_INVALID] > 0) {
                 add("Some TAKwave packets could not be read. Check that every station uses the same encryption mode and key.")
             }

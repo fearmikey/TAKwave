@@ -44,13 +44,21 @@ has been run end to end.
       and how lossy it is (one report says about half of raw IP packets got through, while
       the radio's own text messages were reliable). Also whether the XTS 2500's USB cable
       appears as a USB serial device on Android at all, and what vendor/product id it reports.
-- [ ] APX 6000 / APX 8000 on USB: that it enumerates as RNDIS (or CDC-ECM) with Motorola's
-      vendor id 0x0CAD on Android, that `Rndis.initialize` succeeds (some devices need the
-      interrupt endpoint read before GET_ENCAPSULATED_RESPONSE answers), whether the radio runs a
-      DHCP server on the link and what it hands out, that ARP and UDP to 255.255.255.255 work,
-      and whether the radio passes UDP to port 50125 from the air to the phone. Also whether
-      the phone powers the radio's USB side or needs a powered OTG hub, and whether CPS-style
-      radio management on the same link (port 8675) interferes.
+- [ ] APX 6000 / APX 8000 on USB. First field test (APX 8000, firmware R36.00.02, conventional
+      P25, 2026-11-26): the radio is found on Android, `Rndis.initialize` succeeds and the IP
+      link comes up, so packets reach the radio. It did not key: its data profile had Packet
+      Data Mode FNE and Limited Broadcast unchecked (Terminal Data, NAT Enable, Auto Generate IP
+      Address and Auto Generate Target IP Address were checked, ARS disabled). APX CPS offers
+      Packet Data Mode FNE, Repeated and Direct. With Repeated and Limited Broadcast checked,
+      the tester confirmed the radio transmits TAKwave's packets sent to 255.255.255.255 (the
+      default destination). Still to check: whether Direct works as well (the tester expects it
+      to be the better choice for radio to radio); whether the radio answers with ICMP errors
+      when it cannot send (now shown as a warning); what addresses its DHCP server hands out;
+      and whether a second radio passes UDP to port 50125 from the air to its phone. With NAT Enable on that may need an entry in Data Wide > NAT List (LAN
+      port, static NAT IP address, WAN port) for the phone's address, or NAT off: a guess from
+      the field names, untested. Also whether the phone powers the radio's USB side or needs a
+      powered OTG hub, and whether CPS-style radio management on the same link (port 8675)
+      interferes.
 - [ ] MOTOTRBO (XPR 6550 or later) on USB. Seen on Linux: the XPR 6550 enumerates as 0cad:1020,
       product name "Motorola Solutions LTD Device", full speed, interface 0 CDC 02/02/FF (RNDIS,
       interrupt EP 0x81) and interface 1 CDC data (bulk 0x82 in, 0x03 out, 64 bytes); the kernel's

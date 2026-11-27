@@ -2,6 +2,7 @@
 package com.fearmikey.takwave.core.io
 
 import com.fearmikey.takwave.core.ip.EthernetIpLink
+import com.fearmikey.takwave.core.ip.IcmpError
 import com.fearmikey.takwave.core.ip.IpFraming
 import com.fearmikey.takwave.core.ip.UsbNetFraming
 import com.fearmikey.takwave.core.ip.IpPacketLink
@@ -115,10 +116,17 @@ data class P25DataConfig(
  * air time after handing a frame over (unless [pace] is false). TAKwave's own priority queue
  * therefore decides what goes next, not the radio's buffer.
  *
+ * [send] succeeds once the radio has taken the datagram on the cable. The radio does not say
+ * whether it then transmitted it; the one thing it may send back is an ICMP error (destination
+ * unreachable and the like) when it could not. [onUndelivered] gets those for this station's own
+ * datagrams as a readable message that names who reported it: the radio (its address on the
+ * cable) or another address, which may be the radio's air-interface address or a host beyond it.
+ *
  * Received UDP datagrams to [P25DataConfig.port] are handed to the listener as frames; pings are
  * answered so the link can be checked from the radio side. Nothing else is forwarded, but
  * [onIgnored] is told about everything else that arrives (protocol, addresses, ports and the
- * first bytes), so the radio's own traffic can be inspected while setting up.
+ * first bytes; ICMP that is not about this station's datagrams too), so the radio's own traffic
+ * can be inspected while setting up.
  */
 class P25DataTransport(
     private val name: String,
@@ -129,6 +137,7 @@ class P25DataTransport(
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val onLinkUp: (localAddress: Int, radioAddress: Int) -> Unit = { _, _ -> },
     private val onIgnored: ((String) -> Unit)? = null,
+    private val onUndelivered: (message: String) -> Unit = {},
     private val connect: () -> P25Line,
 ) : FrameTransport {
     @Volatile private var running = false
@@ -289,9 +298,34 @@ class P25DataTransport(
             }
             Ipv4.PROTO_ICMP -> {
                 val l = link ?: return
-                Ipv4.echoReply(ip, l.localAddress, nextId())?.let { l.send(it) }
+                val reply = Ipv4.echoReply(ip, l.localAddress, nextId())
+                val error = if (reply == null) Ipv4.icmpError(ip) else null
+                when {
+                    reply != null -> l.send(reply)
+                    // About one of this station's frames: the only word the radio ever gives on what became of one.
+                    error != null && error.protocol == Ipv4.PROTO_UDP && error.destinationPort == config.port ->
+                        undelivered(error, fromRadio = error.reporter == l.peerAddress)
+                    else -> ignored {
+                        "ICMP type ${ip.payload.getOrNull(0)?.toInt()?.and(0xFF)} code ${ip.payload.getOrNull(1)?.toInt()?.and(0xFF)} " +
+                            "from ${Ipv4.format(ip.source)}, ${ip.payload.size} bytes: ${hex(ip.payload)}"
+                    }
+                }
             }
             else -> ignored { "IP protocol ${ip.protocol} ${Ipv4.format(ip.source)} -> ${Ipv4.format(ip.destination)}, ${ip.payload.size} bytes" }
+        }
+    }
+
+    private fun undelivered(error: IcmpError, fromRadio: Boolean) {
+        val to = Ipv4.format(error.destination)
+        val message = if (fromRadio) {
+            "$name: the radio reports that a packet to $to was not sent (${error.reason})"
+        } else {
+            "$name: ${Ipv4.format(error.reporter)} reports that a packet to $to was not delivered (${error.reason})"
+        }
+        try {
+            onUndelivered(message)
+        } catch (e: Exception) {
+            // An observer failing must not take the link down.
         }
     }
 

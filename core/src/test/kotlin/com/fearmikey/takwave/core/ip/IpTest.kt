@@ -13,6 +13,29 @@ import java.io.ByteArrayOutputStream
 import java.util.ArrayDeque
 import java.util.Random
 
+/**
+ * An ICMP message of [type] and [code] from [from] to [to] that quotes the start of [original]
+ * (its IP header and 8 more bytes), as a router sends when it cannot pass a datagram on.
+ */
+internal fun buildIcmpError(from: Int, to: Int, type: Int, code: Int, original: ByteArray): ByteArray {
+    val quote = original.copyOf(minOf(original.size, 28))
+    val icmp = ByteArray(8 + quote.size)
+    icmp[0] = type.toByte()
+    icmp[1] = code.toByte()
+    quote.copyInto(icmp, 8)
+    Ipv4.put16(icmp, 2, Ipv4.checksum(icmp))
+    val p = ByteArray(20 + icmp.size)
+    p[0] = 0x45
+    Ipv4.put16(p, 2, p.size)
+    p[8] = 64
+    p[9] = 1
+    Ipv4.put32(p, 12, from)
+    Ipv4.put32(p, 16, to)
+    Ipv4.put16(p, 10, Ipv4.checksum(p, 0, 20))
+    icmp.copyInto(p, 20)
+    return p
+}
+
 class IpTest {
     private val phone = Ipv4.parse("192.168.128.2")!!
     private val radio = Ipv4.parse("192.168.128.1")!!
@@ -85,6 +108,33 @@ class IpTest {
         assertEquals(0, reply.payload[0].toInt())
         assertEquals(0, Ipv4.checksum(reply.payload))
         assertArrayEquals(icmp.copyOfRange(4, icmp.size), reply.payload.copyOfRange(4, reply.payload.size))
+    }
+
+    @Test
+    fun icmpErrorsNameTheDatagramTheyAreAbout() {
+        val sent = Ipv4.buildUdp(phone, Ipv4.BROADCAST, 50125, 50126, ByteArray(60), id = 3)
+        val error = Ipv4.icmpError(Ipv4.parsePacket(buildIcmpError(radio, phone, 3, 0, sent))!!)!!
+        assertEquals(radio, error.reporter)
+        assertEquals("network unreachable", error.reason)
+        assertEquals(Ipv4.PROTO_UDP, error.protocol)
+        assertEquals(phone, error.source)
+        assertEquals(Ipv4.BROADCAST, error.destination)
+        assertEquals(50125, error.sourcePort)
+        assertEquals(50126, error.destinationPort)
+        assertEquals("port unreachable", Ipv4.icmpError(Ipv4.parsePacket(buildIcmpError(radio, phone, 3, 3, sent))!!)!!.reason)
+        assertEquals("time to live exceeded", Ipv4.icmpError(Ipv4.parsePacket(buildIcmpError(radio, phone, 11, 0, sent))!!)!!.reason)
+
+        // Not errors: a ping, an echo reply, a UDP datagram. Damaged or cut short: refused.
+        assertNull(Ipv4.icmpError(Ipv4.parsePacket(Ipv4.buildEchoRequest(radio, phone, 1, 1))!!))
+        assertNull(Ipv4.icmpError(Ipv4.parsePacket(buildIcmpError(radio, phone, 0, 0, sent))!!))
+        assertNull(Ipv4.icmpError(Ipv4.parsePacket(sent)!!))
+        val damaged = buildIcmpError(radio, phone, 3, 0, sent).also { it[30] = (it[30] + 1).toByte() }
+        assertNull(Ipv4.icmpError(Ipv4.parsePacket(damaged)!!))
+        assertNull(Ipv4.icmpError(Ipv4.parsePacket(buildIcmpError(radio, phone, 3, 0, sent.copyOf(12)))!!))
+        // Without the ports the datagram is still named.
+        val noPorts = Ipv4.icmpError(Ipv4.parsePacket(buildIcmpError(radio, phone, 3, 1, sent.copyOf(20)))!!)!!
+        assertEquals(Ipv4.BROADCAST, noPorts.destination)
+        assertNull(noPorts.destinationPort)
     }
 
     @Test

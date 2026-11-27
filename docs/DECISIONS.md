@@ -576,3 +576,30 @@ be wrong got a fallback the operator can switch to, instead of a code change aft
 154. **Two more Bluetooth PTT presets**: Kenwood TH-D74 / TH-D75 (`TX`/`RX` with CR) and Icom
     IC-705 CI-V at its default address A4 (`1C 00 01` / `1C 00 00`). Presets are stored by name,
     so existing settings are unaffected.
+
+## Radios that key themselves
+
+From the first field test with an APX 8000: the USB link came up, the radio took every packet
+and never keyed (its data profile was in FNE mode with Limited Broadcast off), and the app showed
+TX log lines, "Sent: 5 new" and air time as if it had.
+
+155. **A successful send to a radio or TNC that keys itself means "handed over", and the UI says
+    so.** KISS, P25, DMR and serial-data transports get no word back on whether the radio
+    transmitted, so `RadioStatus.linkUp` (null for the soft modem) replaces the RF state there:
+    a LINK UP / NO LINK badge instead of IDLE, no input level meter, "Handed to the radio"
+    instead of "Sent", the air time marked as an estimate, and one log line at start explaining
+    what TX means. The log kind stays TX; a second kind would split filters and exports for
+    little gain.
+156. **ICMP errors about TAKwave's own datagrams are reported, not dropped**
+    (`P25DataTransport.onUndelivered`, `Ipv4.icmpError`). It is the only feedback a P25 or DMR
+    radio can give. An error counts as ours when the datagram it quotes is UDP to the configured
+    port. The first report of each kind is a warning with a pointer to the help text; repeats go
+    to the log only, and each one counts as a failed packet (it was already counted as sent, and
+    its air time estimate stays, because whether it was transmitted is not known). The message
+    names the reporter: the radio's cable address, or another address, which may be the radio's
+    air-interface address or a host beyond it, so nothing is concluded from that. A radio that
+    drops packets silently still looks healthy; that cannot be fixed from the phone.
+157. **The broadcast default stays.** The APX has a Limited Broadcast setting for exactly
+    this: after the tester changed Packet Data Mode from FNE to Repeated and checked Limited
+    Broadcast, the radio transmitted TAKwave's datagrams to 255.255.255.255. Whether a second
+    radio delivers them to its phone is still to be confirmed (TODO).

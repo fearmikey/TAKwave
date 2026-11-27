@@ -8,7 +8,7 @@
 Positions, chat and map markers between ATAK users with no cell service, no mesh hardware and no ATAK plugin.</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.4.0-blue" alt="Version 0.4.0">
+  <img src="https://img.shields.io/badge/version-0.4.1-blue" alt="Version 0.4.1">
   <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-green" alt="License GPL-3.0-or-later">
   <img src="https://img.shields.io/badge/Android-10%2B-brightgreen" alt="Android 10+">
   <img src="https://img.shields.io/badge/100%25-FOSS-orange" alt="100% FOSS">
@@ -32,9 +32,10 @@ That is why it needs no signing, survives ATAK updates, and works with other TAK
  ATAK ◄──TCP── TAKwave ◄── CoT XML rebuilt ◄── AX.25 ◄── AFSK audio ◄── radio ((((
 ```
 
-> **Status: 0.4.0.** The protocol, modem and gateway logic are covered by a unit
-> test suite, and the app builds for debug and release. It has **not yet been tested on real
-> phones and radios**; see [docs/TODO.md](docs/TODO.md). Treat it as a beta.
+> **Status: 0.4.1.** The protocol, modem and gateway logic are covered by a unit
+> test suite, and the app builds for debug and release. Apart from one field test (an APX 8000
+> on USB transmitting P25 packet data), it has **not yet been tested on real phones and
+> radios**; see [docs/TODO.md](docs/TODO.md). Treat it as a beta.
 
 ## Features
 

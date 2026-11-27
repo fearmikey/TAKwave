@@ -6,6 +6,7 @@ import com.fearmikey.takwave.core.ax25.Ax25Frame
 import com.fearmikey.takwave.core.ip.IpFraming
 import com.fearmikey.takwave.core.ip.IpPacketLink
 import com.fearmikey.takwave.core.ip.Ipv4
+import com.fearmikey.takwave.core.ip.buildIcmpError
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,9 +37,13 @@ class P25DataTransportTest {
         val statuses = LinkedBlockingQueue<String>()
         val config = P25DataConfig(listOf(Ipv4.BROADCAST, peerRadio))
         val linkUp = LinkedBlockingQueue<Pair<Int, Int>>()
+        val undelivered = LinkedBlockingQueue<String>()
+        val ignored = LinkedBlockingQueue<String>()
         val t = P25DataTransport(
             "Test radio", config, reconnectDelayMs = 50, onStatus = { statuses.add(it) }, pace = false,
             onLinkUp = { local, r -> linkUp.add(local to r) },
+            onIgnored = { ignored.add(it) },
+            onUndelivered = { undelivered.add(it) },
         ) {
             val link = object : KissLink {
                 override val input = appInput
@@ -97,6 +102,31 @@ class P25DataTransportTest {
             radioLink.send(Ipv4.buildUdp(peerRadio, Ipv4.BROADCAST, 7, P25DataConfig.DEFAULT_PORT, frame(6), id = 2))
             assertArrayEquals(frame(6), received.poll(5, TimeUnit.SECONDS))
             assertTrue(received.isEmpty())
+
+            // Radio -> app: an ICMP error about one of the app's frames is reported, whoever sends
+            // it; one about a datagram on another port is not the app's and is only logged.
+            val port = P25DataConfig.DEFAULT_PORT
+            val toAll = Ipv4.buildUdp(phone, Ipv4.BROADCAST, port, port, frame(3), id = 7)
+            val toPeer = Ipv4.buildUdp(phone, peerRadio, port, port, frame(3), id = 8)
+            val notOurs = Ipv4.buildUdp(phone, peerRadio, 4007, 4007, frame(3), id = 9)
+            radioLink.send(buildIcmpError(radio, phone, 3, 0, toAll))
+            assertEquals(
+                "Test radio: the radio reports that a packet to 255.255.255.255 was not sent (network unreachable)",
+                undelivered.poll(5, TimeUnit.SECONDS),
+            )
+            radioLink.send(buildIcmpError(peerRadio, phone, 3, 3, toPeer))
+            assertEquals(
+                "Test radio: 192.168.128.20 reports that a packet to 192.168.128.20 was not delivered (port unreachable)",
+                undelivered.poll(5, TimeUnit.SECONDS),
+            )
+            radioLink.send(buildIcmpError(radio, phone, 3, 1, notOurs))
+            radioLink.send(buildIcmpError(radio, phone, 11, 0, toAll))
+            assertEquals(
+                "Test radio: the radio reports that a packet to 255.255.255.255 was not sent (time to live exceeded)",
+                undelivered.poll(5, TimeUnit.SECONDS),
+            )
+            assertTrue(undelivered.isEmpty())
+            assertTrue(ignored.toString(), ignored.any { it.contains("ICMP type 3 code 1 from 192.168.128.1") })
         } finally {
             t.close()
             fromApp.close()

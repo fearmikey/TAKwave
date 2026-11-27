@@ -7,6 +7,32 @@ All notable changes to TAKwave are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-26
+
+Over-air payload unchanged.
+
+### Changed
+
+- **A radio or TNC that keys itself no longer looks like it is transmitting.** With a P25, DMR,
+  D-STAR or NXDN radio or a KISS TNC, TAKwave only knows that a packet was handed over, not
+  whether it went out on the air. The Status screen now says so: a "LINK UP" / "NO LINK" badge
+  replaces the IDLE badge (the notification says the same), the input level meter is hidden,
+  "Sent" reads "Handed to the radio", the air time is marked as an estimate, and the log
+  explains at start that TX means handed to the radio.
+- **P25 help text names the APX settings.** On an APX portable the packet data settings are in
+  the data profile (Data Configuration > Data Profiles): Packet Data Mode must be Repeated or
+  Direct, not FNE (which waits for a data gateway), Limited Broadcast must be checked to send
+  to 255.255.255.255, and Terminal Data must be checked. Found in the first test with an
+  APX 8000, which took the packets on USB and never keyed until its data profile was changed.
+
+### Added
+
+- **Delivery errors from a P25 or DMR radio are shown.** When the radio (or a host beyond it)
+  answers one of TAKwave's packets with an ICMP error such as "destination unreachable",
+  TAKwave now raises a warning that names the destination and the reason, logs every repeat
+  and counts the packet as failed. Before, these answers were dropped without a trace. Other
+  ICMP messages appear in the raw radio data log.
+
 ## [0.4.0] - 2026-11-18
 
 Over-air payload unchanged.
@@ -242,7 +268,8 @@ First release. Over-air protocol version 0.
 
 - Not yet verified on physical phones and radios. See `docs/TODO.md`.
 
-[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/fearmikey/TAKwave/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/fearmikey/TAKwave/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/fearmikey/TAKwave/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/fearmikey/TAKwave/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/fearmikey/TAKwave/compare/v0.3.0...v0.3.1

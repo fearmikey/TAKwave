@@ -1,0 +1,3 @@
+• Radios and TNCs that key themselves: the Status screen now shows whether the link is up and says packets were handed to the radio, instead of implying they were transmitted
+• P25 and DMR radios: delivery errors the radio reports are shown as warnings
+• P25 help names the APX data profile settings (Packet Data Mode, Limited Broadcast, Terminal Data), from the first field test with an APX 8000

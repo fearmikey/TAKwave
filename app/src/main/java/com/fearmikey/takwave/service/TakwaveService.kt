@@ -153,7 +153,8 @@ class TakwaveService : Service() {
     }
 
     private fun updateNotification(status: RadioStatus) {
-        val state = when (status.rf) {
+        // A radio or TNC that keys itself never reports TX or RX; show whether its link is up instead.
+        val state = status.linkUp?.let { if (it) "Radio link up" else "No radio link" } ?: when (status.rf) {
             RfState.IDLE -> "Idle"
             RfState.RX -> "Receiving"
             RfState.TX -> "Transmitting"

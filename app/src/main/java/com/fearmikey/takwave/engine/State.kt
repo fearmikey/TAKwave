@@ -18,6 +18,12 @@ data class RadioStatus(
     val running: Boolean = false,
     val clients: Int = 0,
     val rf: RfState = RfState.IDLE,
+    /**
+     * Whether the link to a radio or TNC that keys itself (KISS, P25, DMR, serial data) is up.
+     * Such a radio never says when it transmits or receives, so this replaces [rf] for it; null
+     * with the soft modem.
+     */
+    val linkUp: Boolean? = null,
     /** Input RMS and peak, 0.0-1.0 of full scale. */
     val level: Float = 0f,
     val peak: Float = 0f,

@@ -14,6 +14,40 @@ class UdpDatagram(
 )
 
 /**
+ * An ICMP error message: [reporter] could not pass on a datagram, for the reason in [type] and
+ * [code]. The other fields come from the copy of that datagram's header inside the message; the
+ * ports are null unless it was UDP.
+ */
+class IcmpError(
+    val reporter: Int,
+    val type: Int,
+    val code: Int,
+    val protocol: Int,
+    val source: Int,
+    val destination: Int,
+    val sourcePort: Int?,
+    val destinationPort: Int?,
+) {
+    /** The reason in words, for the operator. */
+    val reason: String
+        get() = when (type) {
+            Ipv4.ICMP_UNREACHABLE -> when (code) {
+                0, 6 -> "network unreachable"
+                1, 7 -> "host unreachable"
+                2 -> "protocol unreachable"
+                3 -> "port unreachable"
+                4 -> "too large to send without fragmenting"
+                9, 10, 13 -> "not allowed"
+                else -> "destination unreachable (code $code)"
+            }
+            Ipv4.ICMP_SOURCE_QUENCH -> "sending too fast"
+            Ipv4.ICMP_TIME_EXCEEDED -> "time to live exceeded"
+            Ipv4.ICMP_PARAMETER_PROBLEM -> "malformed packet"
+            else -> "ICMP type $type code $code"
+        }
+}
+
+/**
  * Just enough IPv4 for a point-to-point link to a radio: build and check UDP datagrams and answer
  * pings. Addresses are Ints holding the four bytes in network order (a.b.c.d is a shl 24 or ...).
  * Fragments are not reassembled; TAKwave's datagrams are far below any link MTU.
@@ -23,6 +57,13 @@ object Ipv4 {
     const val PROTO_UDP = 17
     const val HEADER_SIZE = 20
     const val UDP_HEADER_SIZE = 8
+    const val ICMP_HEADER_SIZE = 8
+
+    /** ICMP message types that report a datagram that was not delivered. */
+    const val ICMP_UNREACHABLE = 3
+    const val ICMP_SOURCE_QUENCH = 4
+    const val ICMP_TIME_EXCEEDED = 11
+    const val ICMP_PARAMETER_PROBLEM = 12
 
     /** 255.255.255.255, the limited broadcast address. */
     const val BROADCAST: Int = -1
@@ -157,6 +198,38 @@ object Ipv4 {
         writeHeader(p, p.size, id, 64, PROTO_ICMP, from, ip.source)
         reply.copyInto(p, HEADER_SIZE)
         return p
+    }
+
+    /**
+     * The ICMP error in [ip] (destination unreachable, time exceeded, parameter problem or source
+     * quench), or null when [ip] is something else or fails its checksum. Such a message quotes
+     * the header of the datagram it is about, which says whose datagram that was.
+     */
+    fun icmpError(ip: IpPacket): IcmpError? {
+        if (ip.protocol != PROTO_ICMP) return null
+        val icmp = ip.payload
+        if (icmp.size < ICMP_HEADER_SIZE + HEADER_SIZE) return null
+        val type = icmp[0].toInt() and 0xFF
+        if (type != ICMP_UNREACHABLE && type != ICMP_SOURCE_QUENCH && type != ICMP_TIME_EXCEEDED && type != ICMP_PARAMETER_PROBLEM) return null
+        if (checksum(icmp) != 0) return null
+        val q = ICMP_HEADER_SIZE
+        val b0 = icmp[q].toInt() and 0xFF
+        if (b0 ushr 4 != 4) return null
+        val ihl = (b0 and 0x0F) * 4
+        if (ihl < HEADER_SIZE || q + ihl > icmp.size) return null
+        val protocol = icmp[q + 9].toInt() and 0xFF
+        // The quote holds at least the first 8 bytes after the IP header: for UDP, the ports.
+        val ports = protocol == PROTO_UDP && q + ihl + 4 <= icmp.size
+        return IcmpError(
+            reporter = ip.source,
+            type = type,
+            code = icmp[1].toInt() and 0xFF,
+            protocol = protocol,
+            source = get32(icmp, q + 12),
+            destination = get32(icmp, q + 16),
+            sourcePort = if (ports) get16(icmp, q + ihl) else null,
+            destinationPort = if (ports) get16(icmp, q + ihl + 2) else null,
+        )
     }
 
     /**

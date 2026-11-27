@@ -112,6 +112,8 @@ class RadioEngine(
     /** A D-STAR or NXDN radio's serial data link when that is the backend, to show whether it is up. */
     @Volatile private var serialData: SerialDataTransport? = null
     private var warnedBadFrames = false
+    /** Delivery failures a digital radio has reported, so each kind raises one warning. */
+    private val reportedUndelivered = HashSet<String>()
     private var audioSource: AndroidAudioSource? = null
     private var audioSink: AndroidAudioSink? = null
     private var serialPtt: SerialPtt? = null
@@ -244,6 +246,12 @@ class RadioEngine(
             }
             tickThread = Thread({ tickLoop() }, "takwave-status").apply { isDaemon = true; start() }
             info("Gateway started as ${address ?: "(no callsign)"}; $backendInfo")
+            if (tr != null && softModem == null) {
+                info(
+                    "This radio or TNC keys itself and does not tell TAKwave when it transmits: TX in this log means " +
+                        "a packet was handed to it, not that it went out on the air.",
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "start failed", e)
             warn("Start failed: ${e.message}")
@@ -413,6 +421,13 @@ class RadioEngine(
             "P25 radio", config,
             onStatus = { info(it) },
             onIgnored = radioDataLogger(),
+            onUndelivered = { message ->
+                onUndelivered(
+                    message,
+                    "Check the destination addresses and the radio's packet data programming: the \"i\" next to " +
+                        "\"P25 radio packet data\" in Settings > Radio & audio lists what the radio needs.",
+                )
+            },
             onLinkUp = { local, radio ->
                 val localText = Ipv4.format(local)
                 val radioText = Ipv4.format(radio)
@@ -492,6 +507,13 @@ class RadioEngine(
             "$make radio", config,
             onStatus = { info(it) },
             onIgnored = radioDataLogger(),
+            onUndelivered = { message ->
+                onUndelivered(
+                    message,
+                    "Check the talkgroup, the radio IDs and the radio's data programming: the \"i\" next to " +
+                        "\"DMR radio data\" in Settings > Radio & audio lists what the radio needs.",
+                )
+            },
             onLinkUp = { local, radio ->
                 val localText = Ipv4.format(local)
                 val radioText = Ipv4.format(radio)
@@ -553,6 +575,18 @@ class RadioEngine(
                 SerialLinkKind.BLUETOOTH -> BluetoothDevices.openLink(context, settings.serialRadioBtDevice) { info(it) }
             }
         }.also { serialData = it }
+    }
+
+    /**
+     * A P25 or DMR radio answered one of this station's packets with an ICMP error: it, or a host
+     * beyond it, could not pass the packet on. This is the only feedback such a radio gives. The
+     * packet was counted as sent when the radio took it, so it is counted as failed as well. The
+     * first report of each kind becomes a warning with [advice]; repeats only go to the log.
+     */
+    private fun onUndelivered(message: String, advice: String) {
+        stats.count(ChannelEvent.TX_FAILED)
+        val first = synchronized(reportedUndelivered) { reportedUndelivered.add(message) }
+        if (first) warn("$message. $advice") else log.add(LogKind.ERROR, message)
     }
 
     /** Logs the raw-data observations of a digital radio when the operator asked for them. */
@@ -762,6 +796,7 @@ class RadioEngine(
             running = running,
             clients = server?.clientCount ?: 0,
             rf = tr?.state ?: com.fearmikey.takwave.core.io.RfState.IDLE,
+            linkUp = kiss?.connected ?: ipRadio?.connected ?: serialData?.connected,
             level = tr?.inputLevel ?: 0f,
             peak = softModem?.inputPeak ?: 0f,
             queueDepth = gw?.queueDepth ?: 0,

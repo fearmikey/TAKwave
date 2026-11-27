@@ -467,7 +467,9 @@ broadcast address.
 
 Receive rules: only UDP datagrams to the configured port are used, and their payload goes
 through the same checks as a frame from the AFSK demodulator (section 5). Pings (ICMP echo) from
-the radio side are answered; nothing else is forwarded anywhere.
+the radio side are answered; nothing else is forwarded anywhere. An ICMP error that quotes one of
+the station's own datagrams (UDP to the configured port) is shown to the operator as a delivery
+failure; it changes nothing on the air.
 
 The AX.25 source address stays the station identification, exactly as on AFSK. The radio adds
 its own P25 unit ID on the air, which is not a substitute for it.

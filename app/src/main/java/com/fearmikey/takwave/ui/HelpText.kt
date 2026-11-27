@@ -173,15 +173,27 @@ object HelpText {
             "PPP link request and a ping that cannot be forwarded (TTL 1), and keeps the addresses the radio agrees to. None of this goes over the air. What it cannot " +
             "find out by itself: whether the radio has the packet data option, the other radios' addresses, and " +
             "the UDP port your team uses.\n\n" +
-            "What the radio needs (set in its programming software; this is from community reports and is not yet " +
-            "tested with TAKwave):\n" +
-            "• The APCO packet data option (Q947 / W947) in the radio's flash. Without it the radio has no data " +
-            "service.\n" +
-            "• Radio Wide > Data: subscriber IP 192.168.128.1 and mobile computer IP 192.168.128.2 (the defaults " +
-            "here), and the data port enabled (auto-detect finds its framing and baud rate).\n" +
-            "• On the conventional channel used: Packet Data Capable System on, Packet Data Mode \"Repeated\" (reported " +
-            "to be needed even on simplex), a Subscriber Air-Interface IP that is different on every radio but in the " +
-            "same /24 network, and Limited Broadcast on if you send to 255.255.255.255.\n" +
+            "TAKwave cannot see whether the radio transmits. The radio takes each packet on the cable and keys " +
+            "itself; if its programming does not let it send the packet, it drops it, at best answering with an " +
+            "error that TAKwave shows as a warning. \"LINK UP\" on the Status screen only means the cable link " +
+            "works. Watch the radio's transmit indicator when you test.\n\n" +
+            "What the radio needs (set in its programming software; this is from community reports and one field " +
+            "test: an APX 8000 transmitted TAKwave's packets once its data profile was set as below. Reception by a " +
+            "second radio is not confirmed yet):\n" +
+            "• The APCO packet data option in the radio's flash (Q947 / W947 on ASTRO 25 radios). Without it the " +
+            "radio has no data service.\n" +
+            "• APX portables (Data Configuration > Data Profiles): a data profile of type Conventional whose Packet " +
+            "Data Mode is Repeated or Direct, not FNE. FNE waits for a data gateway on the channel; without one " +
+            "the radio takes TAKwave's packets and never transmits them. The APX 8000 in the field test transmitted " +
+            "with Repeated; Direct (radio to radio without a repeater) has not been tried yet. " +
+            "Limited Broadcast checked if you send to " +
+            "255.255.255.255 (the default here), and Terminal Data checked so the radio passes data to and from the " +
+            "phone. The conventional channel used must have packet data on and use that profile.\n" +
+            "• ASTRO 25 radios (XTS, XTL), Radio Wide > Data: subscriber IP 192.168.128.1 and mobile computer IP " +
+            "192.168.128.2 (the defaults here), and the data port enabled (auto-detect finds its framing and baud " +
+            "rate). On the conventional channel used: Packet Data Capable System on, Packet Data Mode \"Repeated\" " +
+            "(reported to be needed even on simplex), a Subscriber Air-Interface IP that is different on every radio " +
+            "but in the same /24 network, and Limited Broadcast on if you send to 255.255.255.255.\n" +
             "• A trunked system needs data infrastructure (a packet data gateway); conventional and simplex channels " +
             "do not.\n\n" +
             "Cables: for an APX portable, its USB programming/data cable and a USB OTG adapter for the phone. For an " +
@@ -359,6 +371,10 @@ object HelpText {
             "collide: lengthen the position report interval or turn on time slots.\n\n" +
             "My air time is how long this station transmitted. One station using more than a fifth of the " +
             "channel crowds the others out.\n\n" +
+            "With a digital radio or a TNC that keys itself, TAKwave only knows that a packet was handed over, not " +
+            "whether it went out on the air: the sent counts are packets handed to the radio, the air time is an " +
+            "estimate, and Channel busy is not measured. A packet the radio reports as undelivered counts as " +
+            "failed.\n\n" +
             "Repaired by FX.25 counts packets that would have been lost without error correction. Other traffic " +
             "is packet radio that is not TAKwave (for example APRS). Unreadable means TAKwave packets that " +
             "could not be decoded, often a key or encryption mismatch.\n\n" +
